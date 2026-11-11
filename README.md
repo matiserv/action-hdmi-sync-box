@@ -75,7 +75,7 @@ yourself.
 
 ## What you need
 
-- A 3.3 V USB-UART adapter and three wires (GND, TX, RX). Soldering is needed for the ESP32 header and the
+- A 3.3 V USB-UART adapter and three wires (GND, TX, RX). Soldering is needed for the ESP32 header (`5J1`) and the
   Wi-Fi module pads.
 - A PC with Python 3 and [`esptool`](https://github.com/espressif/esptool) (`pip install esptool`).
 - [BK7231GUIFlashTool](https://github.com/openshwprojects/BK7231GUIFlashTool) (Windows) for the BK7238.
@@ -89,7 +89,8 @@ yourself.
 
 | No. | Part | Notes |
 |---|---|---|
-| 1, 2 | `5J1` (3 pads) and `5J2` (4 pads) | headers of the ESP32 section. The 1st-generation teardown reports RX, TX, GND and 3V3 on the header of each circuit. The pin order is not printed: find GND with a continuity test to an HDMI shield and 3V3 with a voltmeter; the other two are TX and RX (no output at 115200 baud → swap them). |
+| 1 | `5J1` (3 pads) | **ESP32 UART: RX, TX, GND.** This is the header for flashing the ESP32 and for its console. It has no 3.3 V pad; 3.3 V is available next to the Wi-Fi module. The order of the three pads is not printed: find GND with a continuity test to an HDMI shield; the other two are TX and RX (no text at 115200 baud → swap them). |
+| 2 | `5J2` (4 pads) | header of the authorisation circuit (the factory ESP32 firmware talks to it at start-up). Not used by this firmware; leave it alone. |
 | 3 | `5S1` button | ESP32 GPIO0. Hold it while resetting or powering up to enter the ESP32 bootloader. |
 | 4 | `5U3` | ESP32-D0WD-V3 |
 | 5 | `5U1` | ESP32 flash (4 MB) |
@@ -182,7 +183,7 @@ The result is `.pio/build/syncbox/firmware.bin`. The project uses `espressif32@6
 
 ## Step 4 — first start and checks
 
-Open a serial terminal on the ESP32 header (115200 8N1) and type `help`. The commands used most:
+Open a serial terminal on the ESP32 header `5J1` (115200 8N1) and type `help`. The commands used most:
 
 | Command | What it shows or does |
 |---|---|

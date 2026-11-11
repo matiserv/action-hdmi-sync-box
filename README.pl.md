@@ -74,7 +74,7 @@ Gotowego firmware dla BK7238 nie ma: obraz ESPHome zawiera hasło Wi-Fi i klucz 
 
 ## Co jest potrzebne
 
-- Adapter USB-UART 3,3 V i trzy przewody (GND, TX, RX). Do złącza ESP32 i padów modułu Wi-Fi trzeba się dolutować.
+- Adapter USB-UART 3,3 V i trzy przewody (GND, TX, RX). Do złącza ESP32 (`5J1`) i padów modułu Wi-Fi trzeba się dolutować.
 - PC z Pythonem 3 i [`esptool`](https://github.com/espressif/esptool) (`pip install esptool`).
 - [BK7231GUIFlashTool](https://github.com/openshwprojects/BK7231GUIFlashTool) (Windows) do BK7238.
 - ESPHome 2026.10 lub nowsze (dodatek Home Assistant albo wiersz poleceń).
@@ -87,7 +87,8 @@ Gotowego firmware dla BK7238 nie ma: obraz ESPHome zawiera hasło Wi-Fi i klucz 
 
 | Nr | Element | Uwagi |
 |---|---|---|
-| 1, 2 | `5J1` (3 pady) i `5J2` (4 pady) | złącza części ESP32. Teardown 1. generacji podaje RX, TX, GND i 3V3 na złączu każdego układu. Kolejność pinów nie jest opisana: GND znajdziesz testem ciągłości do ekranu gniazda HDMI, 3V3 woltomierzem; pozostałe dwa to TX i RX (brak tekstu przy 115200 bodów → zamień je). |
+| 1 | `5J1` (3 pady) | **UART ESP32: RX, TX, GND.** To złącze do wgrywania ESP32 i do jego konsoli. Nie ma na nim 3,3 V; 3,3 V jest przy module Wi-Fi. Kolejność trzech padów nie jest opisana: GND znajdziesz testem ciągłości do ekranu gniazda HDMI; pozostałe dwa to TX i RX (brak tekstu przy 115200 bodów → zamień je). |
+| 2 | `5J2` (4 pady) | złącze układu autoryzacji (fabryczny firmware ESP32 rozmawia z nim przy starcie). Ten firmware go nie używa; zostaw je w spokoju. |
 | 3 | przycisk `5S1` | GPIO0 ESP32. Przytrzymany przy resecie lub włączeniu zasilania wprowadza ESP32 w tryb programowania. |
 | 4 | `5U3` | ESP32-D0WD-V3 |
 | 5 | `5U1` | pamięć flash ESP32 (4 MB) |
@@ -180,7 +181,7 @@ Wynik to `.pio/build/syncbox/firmware.bin`. Projekt używa `espressif32@6.9.0` (
 
 ## Krok 4 — pierwsze uruchomienie i testy
 
-Otwórz terminal szeregowy na złączu ESP32 (115200 8N1) i wpisz `help`. Najczęściej używane komendy:
+Otwórz terminal szeregowy na złączu ESP32 `5J1` (115200 8N1) i wpisz `help`. Najczęściej używane komendy:
 
 | Komenda | Co pokazuje lub robi |
 |---|---|
