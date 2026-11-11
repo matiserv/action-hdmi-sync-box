@@ -35,6 +35,7 @@ entry point.
 - [Will it work on the 1st generation?](#will-it-work-on-the-1st-generation)
 - [Known limitations](#known-limitations)
 - [Sources](#sources)
+- [License](#license)
 
 ## How the box works
 
@@ -297,7 +298,6 @@ If you try it, please report what you find.
 - No microphone / music mode.
 - End-to-end latency was estimated from its parts (about 14 ms from the end of a frame to the strip), not
   measured from screen to LED.
-- No licence file yet — the author has to choose one before the code can be reused.
 
 ## Sources
 
@@ -325,6 +325,10 @@ Behaviour of room lights:
 - [Signify press release on Hue Sync intensity levels](https://www.signify.com/en-us/about/news/press-releases/2018/20180531-create-surround-sound-for-your-eyes-with-philips-hue-sync)
 
 More references are in [`docs/video-path-research.pl.md`](docs/video-path-research.pl.md).
+
+## License
+
+[MIT](LICENSE). ESPHome and LibreTiny, which the BK7238 firmware is built with, have their own licences.
 
 ## Disclaimer
 

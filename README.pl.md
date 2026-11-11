@@ -35,6 +35,7 @@ angielski odpowiednik.
 - [Czy zadziała na 1. generacji?](#czy-zadziała-na-1-generacji)
 - [Znane ograniczenia](#znane-ograniczenia)
 - [Źródła](#źródła)
+- [Licencja](#licencja)
 
 ## Jak działa box
 
@@ -290,7 +291,6 @@ Jeśli spróbujesz, daj znać, co wyszło.
 - Nie ma trybu muzycznego z mikrofonu.
 - Opóźnienie całego toru jest oszacowane z części składowych (ok. 14 ms od końca klatki do taśmy), a nie
   zmierzone od ekranu do diody.
-- Nie ma jeszcze pliku licencji — autor musi ją wybrać, zanim kod będzie można ponownie wykorzystać.
 
 ## Źródła
 
@@ -318,6 +318,10 @@ Zachowanie lamp w pokoju:
 - [Signify — komunikat o poziomach intensywności Hue Sync](https://www.signify.com/en-us/about/news/press-releases/2018/20180531-create-surround-sound-for-your-eyes-with-philips-hue-sync)
 
 Więcej odnośników jest w [`docs/video-path-research.pl.md`](docs/video-path-research.pl.md).
+
+## Licencja
+
+[MIT](LICENSE). ESPHome i LibreTiny, z którymi budowany jest firmware BK7238, mają własne licencje.
 
 ## Zastrzeżenie
 
