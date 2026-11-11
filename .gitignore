@@ -1,0 +1,26 @@
+# Secrets and anything built with them / Hasla i wszystko, co jest z nimi zbudowane
+secrets.yaml
+*.uf2
+*.rbl
+*.ug.bin
+esphome/.esphome/
+.esphome/
+
+# Device backups (vendor firmware, device-specific data) / Kopie urzadzen
+readResult_*.bin
+*backup*.bin
+used_flash*.bin
+
+# Build outputs / Wyniki kompilacji
+esp32/.pio/
+esp32/build/
+esp32/sdkconfig
+esp32/sdkconfig.old
+__pycache__/
+*.pyc
+
+# Local tools / Lokalne
+.vscode/
+.idea/
+tools/bench/podglad_esp.html
+tools/bench/*.csv

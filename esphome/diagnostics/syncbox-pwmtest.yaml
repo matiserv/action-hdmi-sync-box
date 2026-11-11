@@ -1,0 +1,92 @@
+# TEST TORU DO TASMY BEZ UART: P0 stale LOW (GPIO), P8 sprzetowy PWM 500 kHz w paczkach.
+# Przy bramce NOR: dane = NOT(P8), gdy P0 = LOW.
+#   P8 PWM 500 kHz, 60 % HIGH  -> na danych impulsy 0,8 us HIGH / 1,2 us LOW = ciag bitow "1"
+#   P8 stale HIGH przez 600 us -> dane LOW = reset / zatrzask
+# Jesli tor dziala, pierwsze 4-5 sekcji tasmy zapala sie na bialo (lub na losowe kolory)
+# przez ok. 2 sekundy po nacisnieciu przycisku. Wgrywaj przez OTA (esphome run / strona WWW).
+
+bk72xx:
+  board: t1-u
+  framework:
+    version: recommended
+    loglevel: warn
+
+logger:
+  level: DEBUG
+  hardware_uart: UART1
+  baud_rate: 115200
+
+wifi:
+  ssid: "TWOJA_SIEC"
+  password: "TWOJE_HASLO"
+  power_save_mode: none
+  ap:
+    ssid: "hdmi-syncbox-fallback"
+    password: "ESPHome1337"
+
+captive_portal:
+
+api:
+  encryption:
+    key: "TWOJ_DOTYCHCZASOWY_KLUCZ_API"
+
+ota:
+  - platform: esphome
+    password: "TWOJE_DOTYCHCZASOWE_HASLO_OTA"
+
+web_server:
+  port: 80
+
+esphome:
+  name: hdmi-syncbox
+
+switch:
+  - platform: gpio
+    name: "TEST P0 (ON = fizycznie HIGH)"
+    id: test_p0
+    pin:
+      number: P0
+      mode: output
+    restore_mode: ALWAYS_OFF      # OFF = P0 LOW, tak ma zostac podczas testu
+
+output:
+  - platform: libretiny_pwm
+    id: p8_pwm
+    pin: P8
+    frequency: 500 kHz
+
+button:
+  - platform: template
+    name: "TEST paczki PWM na P8"
+    on_press:
+      - lambda: |-
+          ESP_LOGI("test", "start: 100 paczek PWM 500 kHz na P8, P0 trzymane LOW");
+          for (int i = 0; i < 100; i++) {
+            // paczka bitow "1": P8 w trybie PWM, 60 % HIGH
+            id(p8_pwm).set_level(0.6f);
+            delayMicroseconds(250);
+            // reset / zatrzask: P8 stale HIGH -> na danych LOW
+            pinMode(8, OUTPUT);
+            digitalWrite(8, HIGH);
+            delayMicroseconds(600);
+            delayMicroseconds(20000);   // przerwa 20 ms miedzy paczkami
+            App.feed_wdt();
+          }
+          // na koniec P8 zostaje stale HIGH (dane LOW)
+          ESP_LOGI("test", "koniec");
+
+  - platform: template
+    name: "TEST P8 stale LOW"
+    on_press:
+      - lambda: |-
+          pinMode(8, OUTPUT);
+          digitalWrite(8, LOW);
+          ESP_LOGI("test", "P8 = LOW (przy P0 LOW na danych powinno byc stale HIGH)");
+
+  - platform: template
+    name: "TEST P8 stale HIGH"
+    on_press:
+      - lambda: |-
+          pinMode(8, OUTPUT);
+          digitalWrite(8, HIGH);
+          ESP_LOGI("test", "P8 = HIGH (na danych powinno byc LOW)");

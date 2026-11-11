@@ -1,0 +1,48 @@
+# KONFIG DIAGNOSTYCZNY - sprawdza tor P0/P8 -> bramka NOR -> zlacze tasmy.
+# P0 jest zwyklym wyjsciem GPIO (bez UART). P8 steruje "swiatlo" PWM:
+#   0 %   = P8 stale LOW
+#   100 % = P8 stale HIGH
+#   1-99% = fala 1 kHz (test z elektrody: na 1. generacji rozswietlal tasme na bialo)
+
+bk72xx:
+  board: t1-u
+  framework:
+    version: latest
+    loglevel: none
+
+logger:
+  baud_rate: 0
+
+wifi:
+  ssid: "TWOJA_SIEC"
+  password: "TWOJE_HASLO"
+  power_save_mode: none
+
+api:
+ota:
+  - platform: esphome
+
+esphome:
+  name: syncbox-diag
+
+switch:
+  - platform: gpio
+    name: "DIAG P0 (ON = fizycznie HIGH)"
+    id: diag_p0
+    pin:
+      number: P0
+      mode: output
+    restore_mode: ALWAYS_OFF      # OFF = P0 fizycznie LOW
+
+output:
+  - platform: libretiny_pwm
+    id: p8_pwm
+    pin: P8
+    frequency: 1000 Hz
+
+light:
+  - platform: monochromatic
+    name: "DIAG P8 (0% LOW, 100% HIGH, reszta PWM 1 kHz)"
+    output: p8_pwm
+    default_transition_length: 0s
+    gamma_correct: 1.0

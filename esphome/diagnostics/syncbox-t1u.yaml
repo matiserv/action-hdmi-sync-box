@@ -1,0 +1,145 @@
+# Eurodomest HDMI Sync Box 2. gen (3225765), plytka A4E32MGS02KR_V5, modul T1-U (BK7238)
+# Tasma 6208000100 (SM16703 / WS2811), 28 sekcji przy montazu 3-stronnym (7+14+7).
+#
+# Parametry zgodne z fabrycznym firmware (analiza wsadu):
+#   P0  = UART2 TX, 6 500 000 baud, 6N1, DMA. 1 bajt UART = 1 bit tasmy.
+#         bit "1" -> 0x20  (na linii UART: 6x LOW 923 ns + 2x HIGH 308 ns)
+#         bit "0" -> 0x3E  (na linii UART: 2x LOW 308 ns + 6x HIGH 923 ns)
+#         Na plytce jest inwerter, wiec na tasmie wychodzi poprawny sygnal 812 kHz.
+#   P24 = zasilanie / enable tasmy ("lumina ctrl pin"). Przy starcie fabryczny
+#         firmware ustawia 0. Polaryzacja wlaczenia nieznana: przetestuj ON i OFF.
+#   Kolejnosc kolorow: BRG. Reset: 300 us.
+#   P26 = przycisk (pull-up, aktywny LOW), P20 = mikrofon (ADC), P14-P17 = SPI slave z ukladu wideo.
+#
+# !!! Wstaw swoje: wifi, api.encryption.key, ota.password (jak w poprzednich wersjach).
+
+bk72xx:
+  board: t1-u
+  framework:
+    version: recommended
+    loglevel: warn
+
+logger:
+  level: DEBUG
+  hardware_uart: UART1    # TX1 = P11, jak w fabrycznym firmware; P0 zostaje dla tasmy
+  baud_rate: 115200
+
+wifi:
+  ssid: "TWOJA_SIEC"
+  password: "TWOJE_HASLO"
+  power_save_mode: none
+  ap:
+    ssid: "hdmi-syncbox-fallback"
+    password: "ESPHome1337"
+
+captive_portal:
+
+api:
+  encryption:
+    key: "TWOJ_DOTYCHCZASOWY_KLUCZ_API"
+
+ota:
+  - platform: esphome
+    password: "TWOJE_DOTYCHCZASOWE_HASLO_OTA"
+
+web_server:
+  port: 80
+
+esphome:
+  name: hdmi-syncbox
+
+uart:
+  id: led_uart
+  tx_pin: P0
+  baud_rate: 6500000      # 26 MHz / 4
+  data_bits: 6
+  parity: NONE
+  stop_bits: 1
+
+switch:
+  - platform: gpio
+    id: led_enable
+    name: "LED enable (P24, ON = fizycznie HIGH)"
+    pin:
+      number: P24
+    restore_mode: ALWAYS_ON   # jesli nie swieci, przelacz na OFF i sprobuj ponownie
+
+binary_sensor:
+  - platform: gpio
+    name: "Przycisk (P26)"
+    pin:
+      number: P26
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+
+globals:
+  - id: cr
+    type: float
+    initial_value: '0'
+  - id: cg
+    type: float
+    initial_value: '0'
+  - id: cb
+    type: float
+    initial_value: '0'
+
+script:
+  - id: send_frame
+    mode: restart
+    then:
+      - lambda: |-
+          const uint8_t ONE = 0x20, ZERO = 0x3E;
+          const int NUM_PIXELS = 28;
+          // kolejnosc BRG jak w fabrycznym firmware
+          uint8_t px[3] = {
+            (uint8_t)(id(cb) * 255.0f),
+            (uint8_t)(id(cr) * 255.0f),
+            (uint8_t)(id(cg) * 255.0f)
+          };
+          static uint8_t buf[28 * 3 * 8];
+          size_t n = 0;
+          for (int p = 0; p < NUM_PIXELS; p++) {
+            for (int c = 0; c < 3; c++) {
+              uint8_t v = px[c];
+              for (int bit = 7; bit >= 0; bit--) buf[n++] = (v & (1 << bit)) ? ONE : ZERO;
+            }
+          }
+          {
+            esphome::InterruptLock lock;     // bez przerw w strumieniu (ok. 0,8 ms)
+            id(led_uart).write_array(buf, n);
+            id(led_uart).flush();
+          }
+          delayMicroseconds(300);            // reset / zatrzask
+          ESP_LOGI("led", "frame: %u bajtow UART @6.5M, r=%u g=%u b=%u", (unsigned) n, px[1], px[2], px[0]);
+
+output:
+  - platform: template
+    id: out_r
+    type: float
+    write_action:
+      - lambda: id(cr) = state;
+      - script.execute: send_frame
+  - platform: template
+    id: out_g
+    type: float
+    write_action:
+      - lambda: id(cg) = state;
+      - script.execute: send_frame
+  - platform: template
+    id: out_b
+    type: float
+    write_action:
+      - lambda: id(cb) = state;
+      - script.execute: send_frame
+
+light:
+  - platform: rgb
+    name: "HDMI Sync Box LEDs"
+    id: syncbox_light
+    red: out_r
+    green: out_g
+    blue: out_b
+    default_transition_length: 0s
+    gamma_correct: 1.0

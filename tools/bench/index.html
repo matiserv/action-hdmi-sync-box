@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<title>Syncbox bench</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; cursor: none; }
+  canvas { display: block; width: 100vw; height: 100vh; }
+  #hint { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); color: #888;
+          font: 20px sans-serif; text-align: center; pointer-events: none; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hint">Kliknij, żeby przejść na pełny ekran (albo F11).<br>Obraz steruje program testowy.</div>
+<script>
+// Strona wyświetla wzór zadany przez serwer (/state). Bez nakładek: wszystko, co widać, jest mierzone.
+const cv = document.getElementById('c'), ctx = cv.getContext('2d', { alpha: false });
+const hint = document.getElementById('hint');
+let st = { seq: 0, mode: 'solid', color: [0, 0, 0] }, t0 = performance.now(), frameNo = 0;
+
+function resize() { cv.width = window.innerWidth * devicePixelRatio; cv.height = window.innerHeight * devicePixelRatio; }
+window.addEventListener('resize', resize); resize();
+document.addEventListener('click', () => { document.documentElement.requestFullscreen?.(); hint.style.display = 'none'; });
+
+const rgb = c => `rgb(${c[0]},${c[1]},${c[2]})`;
+
+async function poll() {
+  try {
+    const r = await fetch('/state', { cache: 'no-store' });
+    const s = await r.json();
+    if (s.seq !== st.seq) { st = s; t0 = performance.now(); frameNo = 0; if (s.mode !== 'idle') hint.style.display = 'none'; }
+  } catch (e) { /* serwer chwilowo niedostępny */ }
+  setTimeout(poll, 60);
+}
+
+function draw(now) {
+  const W = cv.width, H = cv.height, t = now - t0;
+  frameNo++;
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+  switch (st.mode) {
+    case 'solid':
+      ctx.fillStyle = rgb(st.color); ctx.fillRect(0, 0, W, H); break;
+    case 'cells': {                       // siatka n x m komórek, kolory wierszami
+      const nx = st.nx, ny = st.ny;
+      for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
+        ctx.fillStyle = rgb(st.cells[y * nx + x]);
+        const x0 = Math.round(x * W / nx), x1 = Math.round((x + 1) * W / nx);
+        const y0 = Math.round(y * H / ny), y1 = Math.round((y + 1) * H / ny);
+        ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
+      }
+      break; }
+    case 'ramp': {                        // gradient poziomy lub pionowy od koloru a do b
+      const g = st.vertical ? ctx.createLinearGradient(0, 0, 0, H) : ctx.createLinearGradient(0, 0, W, 0);
+      g.addColorStop(0, rgb(st.a)); g.addColorStop(1, rgb(st.b));
+      ctx.fillStyle = g; ctx.fillRect(0, 0, W, H); break; }
+    case 'flash': {                       // przełączanie a/b co `frames` klatek ekranu
+      const k = Math.floor(frameNo / st.frames) % 2;
+      ctx.fillStyle = rgb(k ? st.b : st.a); ctx.fillRect(0, 0, W, H); break; }
+    case 'sweep': {                       // pas o szerokości `width` (ułamek ekranu) jadący przez ekran w `period` ms
+      ctx.fillStyle = rgb(st.bg); ctx.fillRect(0, 0, W, H);
+      const p = (t % st.period) / st.period;          // 0..1
+      ctx.fillStyle = rgb(st.color);
+      if (st.vertical) {                  // pas poziomy jadący z góry na dół
+        const y = p * (1 + st.width) * H - st.width * H;
+        ctx.fillRect(0, y, W, st.width * H);
+      } else {
+        const x = p * (1 + st.width) * W - st.width * W;
+        ctx.fillRect(x, 0, st.width * W, H);
+      }
+      break; }
+    default: break;                       // 'idle': czarny ekran
+  }
+  requestAnimationFrame(draw);
+}
+poll(); requestAnimationFrame(draw);
+</script>
+</body>
+</html>
