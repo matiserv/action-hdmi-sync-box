@@ -30,6 +30,8 @@ angielski odpowiednik.
 - [Krok 2 — ESPHome na BK7238](#krok-2--esphome-na-bk7238)
 - [Krok 3 — własny firmware na ESP32](#krok-3--własny-firmware-na-esp32)
 - [Krok 4 — pierwsze uruchomienie i testy](#krok-4--pierwsze-uruchomienie-i-testy)
+- [Bez kabla: stan, konsola i aktualizacje przez Wi-Fi](#bez-kabla-stan-konsola-i-aktualizacje-przez-wi-fi)
+- [Zaniki obrazu HDMI](#zaniki-obrazu-hdmi)
 - [Kalibracja](#kalibracja)
 - [Inne lampy w pokoju (satelity)](#inne-lampy-w-pokoju-satelity)
 - [Czy zadziała na 1. generacji?](#czy-zadziała-na-1-generacji)
@@ -45,7 +47,7 @@ wejście HDMI ─► GSV2002 (repeater HDMI) ─► wyjście HDMI do TV
                      └─► MX9291 (HDMI → analogowe RGB, timing 1080p) ─► R, G, B + HSync, VSync
                                                                           │
         ESP32-D0WD-V3: ADC1 na GPIO35/32/33, HSync GPIO39, VSync GPIO34
-        składa pole 48×27 RGB na klatkę ─► SPI master, 8 MHz (GPIO4 SCLK, 5 CS, 27 MOSI)
+        składa pole 48×27 RGB na klatkę ─► SPI master, 8 MHz (GPIO4 SCLK, 5 CS, 27 MOSI, 16 MISO)
                                                                           │
         T1-U (BK7238): SPI slave na P14–P17 ─► rozkłada pole na 28 sekcji taśmy
         (7 z lewej, 14 u góry, 7 z prawej) ─► dane taśmy na P0 (UART2, 6,5 Mbaud, 6N1, odwracane na płytce)
@@ -53,7 +55,10 @@ wejście HDMI ─► GSV2002 (repeater HDMI) ─► wyjście HDMI do TV
 ```
 
 Mały mikrokontroler części HDMI (HK32) wysyła do ESP32 (GPIO25, 9600 bodów) tekstowy log z formatem wejścia
-i trybem HDR; firmware rozpoznaje z niego HDR.
+i trybem HDR; firmware rozpoznaje z niego HDR i format wejścia.
+
+To samo łącze SPI niesie też stan HDMI do modułu Wi-Fi, a linią zwrotną konsolę ESP32 —
+patrz [Bez kabla](#bez-kabla-stan-konsola-i-aktualizacje-przez-wi-fi).
 
 Taśma ma 84 diody w 28 adresowalnych sekcjach, kolejność kolorów BRG.
 
@@ -66,7 +71,7 @@ Taśma ma 84 diody w 28 adresowalnych sekcjach, kolejność kolorów BRG.
 | [`esphome/components/syncbox/`](esphome/components/syncbox/) | komponent zewnętrzny (sterownik taśmy, odbiornik SPI, mapowanie, kalibracja, satelity) i jego notatki |
 | [`esphome/diagnostics/`](esphome/diagnostics/) | małe konfiguracje, którymi szukane były piny taśmy; przydatne przy przenoszeniu na inną wersję płytki |
 | [`esp32/`](esp32/) | źródła firmware ESP32 (ESP-IDF 5.3.1 przez PlatformIO) i notatki z rozwoju |
-| [`firmware/esp32/`](firmware/esp32/) | gotowy firmware ESP32 v14.2: aplikacja i pełny obraz, z sumami SHA-256 |
+| [`firmware/esp32/`](firmware/esp32/) | gotowy firmware ESP32 v14.4: aplikacja i pełny obraz, z sumami SHA-256 |
 | [`tools/bench/`](tools/bench/) | strona testowa i skrypty pomiarowe do kalibracji i testów regresji |
 | [`tools/uf2_to_obk.py`](tools/uf2_to_obk.py) | zamienia UF2 z ESPHome na surowy obraz dla flashera OpenBeken |
 | [`docs/`](docs/) | zdjęcia, wzorcowe wartości kalibracji, notatki o torze wideo |
@@ -154,7 +159,7 @@ i po sieci; P0 (UART2) należy do taśmy, więc nie przenoś tam loggera.
 Wejdź w tryb programowania (przytrzymaj `5S1`, wyłącz i włącz zasilanie, puść) i wgraj pełny obraz od adresu 0:
 
 ```bash
-esptool --chip esp32 -p COM4 -b 460800 write-flash 0x0 firmware/esp32/syncbox_esp32_v14.2_full_0x0.bin
+esptool --chip esp32 -p COM4 -b 460800 write-flash 0x0 firmware/esp32/syncbox_esp32_v14.4_full_0x0.bin
 ```
 
 Nadaje się każdy flasher oparty na esptool; we flasherze w przeglądarce ustaw offset `0x0`:
@@ -164,11 +169,12 @@ Nadaje się każdy flasher oparty na esptool; we flasherze w przeglądarce ustaw
 Obraz zawiera własny bootloader, tablicę partycji (dwie partycje OTA) i aplikację. Potem wyłącz i włącz
 zasilanie boxa.
 
-**Kolejne aktualizacje nie wymagają przycisku.** Firmware ma konsolę na tym samym UART (115200 8N1). Komenda
+**Kolejne aktualizacje nie wymagają przycisku ani kabla** (patrz sekcja o Wi-Fi niżej). Po UART: firmware ma
+konsolę na tym samym złączu (115200 8N1). Komenda
 `upload` przyjmuje nową aplikację przez konsolę, zapisuje ją do nieaktywnej partycji OTA i restartuje układ:
 
 ```bash
-python esp32/esp32_upload.py COM4 firmware/esp32/syncbox_esp32_v14.2_app_0x20000.bin
+python esp32/esp32_upload.py COM4 firmware/esp32/syncbox_esp32_v14.4_app_0x20000.bin
 ```
 
 **Kompilacja ze źródeł:**
@@ -201,6 +207,50 @@ Testy, w tej kolejności:
    Jeśli nie, popraw `start_corner` / `direction` w YAML.
 3. `pattern 0` ze źródłem HDMI: `stat` powinien pokazać VSync 60 Hz, format 1080p i 0 pustych komórek.
 4. W Home Assistant włącz światło i wybierz efekt „Synchronizacja HDMI”.
+
+## Bez kabla: stan, konsola i aktualizacje przez Wi-Fi
+
+Po pierwszym wgraniu adapter UART nie jest już potrzebny (firmware ESP32 v14.4+, komponent v17+). Łącze SPI między
+układami niesie więcej niż obraz:
+
+- **Stan HDMI w Home Assistant.** `hdmi_input` pokazuje format wejścia i tryb HDR jako tekst
+  (`3840x2160P60 HDR10` albo „brak sygnału”), a `hdmi_dropouts` liczy zaniki sygnału na wejściu. Każda zmiana trafia
+  też do logu ESPHome.
+- **Konsola ESP32 po sieci.** Z wpisem `esp32_console:` w YAML box otwiera port TCP (2323). Działają przez niego
+  wszystkie komendy konsoli, a narzędzia przyjmują `tcp://<adres-boxa>:2323` zamiast `COM4`:
+
+  ```bash
+  set SYNCBOX_CONSOLE_PASSWORD=twoje-haslo-konsoli
+  python tools/bench/espcmd.py tcp://192.168.1.50:2323 "ver ; stat ; hdmi log"
+  ```
+
+- **Aktualizacja firmware ESP32 przez Wi-Fi:**
+
+  ```bash
+  python esp32/esp32_upload.py tcp://192.168.1.50:2323 firmware/esp32/syncbox_esp32_v14.4_app_0x20000.bin
+  ```
+
+  Wgrany firmware startuje na próbę. Zostaje tylko wtedy, gdy po restarcie działa łącze z modułem Wi-Fi; inaczej
+  ESP32 po 120 s sam wraca do poprzedniej wersji. Skrypt zostaje połączony i wypisuje potwierdzenie. Firmware, który
+  cztery razy z rzędu wysypie się przy starcie, też jest cofany.
+
+Ustaw hasło konsoli. Bez niego każdy w sieci lokalnej może sterować ESP32 i wgrać mu firmware.
+
+Zmierzone na egzemplarzu wzorcowym: podłączony, bezczynny klient nie zmienia obrazu (59,9 kl./s, 117 zapisów taśmy
+na sekundę); wgranie firmware 382 kB trwa 19 s razem z restartem; duży wydruk z konsoli kosztuje około jednej ramki
+na sekundę, dopóki trwa.
+
+Linia zwrotna z modułu Wi-Fi (jego pin MISO, P17) dochodzi na tej płytce do **GPIO16** w ESP32. Fabryczna
+konfiguracja podaje GPIO19, gdzie nic nie jest podłączone; `link scan` w konsoli ESP32 pokazuje, które piny są
+sterowane przez inny układ.
+
+## Zaniki obrazu HDMI
+
+Jeśli obraz na TV mruga albo połączenie jakby zestawia się od nowa, `hdmi log` (albo `tools/bench/hdmilog.py`)
+pokazuje, co w tej chwili widziała część HDMI: zmianę formatu lub HDR przez źródło, `NO SIGNAL` na wejściu albo
+brak jakiejkolwiek zmiany po stronie wejścia. Na egzemplarzu wzorcowym 5-metrowy kabel między przystawką a boxem
+dawał przy 4K60 HDR zanik średnio co 9 minut; z krótkim kablem nie było żadnego w 40 minut. Ten sam 5-metrowy kabel
+wpięty wprost do TV działał, więc po obu stronach boxa trzymaj krótkie kable.
 
 ## Kalibracja
 
@@ -289,6 +339,8 @@ Jeśli spróbujesz, daj znać, co wyszło.
 - Satelity kosztują BK7238 ramki obrazu: ok. 2 % pakietów zbiega się z odrzuconą ramką (2–3 ramki na sekundę
   przy 2 × 60 pakietów/s). Przyczyna nie jest ustalona.
 - Nie ma trybu muzycznego z mikrofonu.
+- Nie sprawdzone: powrót ESP32 do poprzedniej wersji przy pętli restartów (przećwiczony był tylko powrót po
+  niepotwierdzonym wgraniu przez Wi-Fi).
 - Opóźnienie całego toru jest oszacowane z części składowych (ok. 14 ms od końca klatki do taśmy), a nie
   zmierzone od ekranu do diody.
 

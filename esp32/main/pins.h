@@ -24,7 +24,7 @@
 #define PIN_SPI_SCLK     4
 #define PIN_SPI_CS       5
 #define PIN_SPI_MOSI     27
-#define PIN_SPI_MISO     19
+#define PIN_SPI_MISO     16   // zmierzone: P17 (MISO) modulu Wi-Fi jest na plytce polaczone z GPIO16; fabryczna konfiguracja podaje 19, ale tam nic nie ma
 
 // Dioda statusowa na plytce
 #define PIN_STATUS_LED   18
@@ -45,4 +45,8 @@ extern uint8_t g_grid_w, g_grid_h;
 #define PIX_BYTES_MAX    (GRID_W_MAX * GRID_H_MAX * 3)
 #define GRID_BYTES       (GRID_W * GRID_H * 3)
 #define WIRE_HDR         16
-#define FRAME_BYTES      (WIRE_HDR + PIX_BYTES_MAX)
+// Blok pomocniczy doklejany po polu obrazu (stan czesci HDMI, tunel konsoli) - opis w link.h.
+#define AUX_BYTES        512
+#define FRAME_BYTES      (WIRE_HDR + PIX_BYTES_MAX + AUX_BYTES)
+// Ramka bez obrazu (W = H = 0): naglowek, blok pomocniczy i wypelnienie, zeby BK zdazyl oddac swoj blok po MISO.
+#define IDLE_BYTES       1128

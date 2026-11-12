@@ -384,3 +384,63 @@ Wyniki (`smooth_nz 30`, pozostałe domyślne):
 Ograniczenia: średnia zmiana powtarzana częściej niż ok. 3–4 razy na sekundę podnosi zmierzony szum bloku i wraca
 na wolniejszą ścieżkę (110↔140 osiem razy na sekundę: 4 ramki do 90 %). Komórki z drobnym detalem reagują na małe
 zmiany wolno z założenia.
+
+## v14.3 (2026-11-12): dziennik zdarzeń części HDMI
+
+Do szukania przyczyny chwilowych zaników obrazu. Komenda `hdmi log [clear]` wypisuje ostatnie 32 zdarzenia z czasem
+od startu: każdą zmianę komunikatu wejścia zgłaszanego przez mikrokontroler układu HDMI (`Rx: Active:3840x2160P60Hz
+HDR:HDR10 …` albo `Rx: NO SIGNAL`), inne linie jego logu, zanik i powrót VSync oraz zmianę liczby linii w ramce.
+`bench/hdmilog.py` przelicza czas na zegarowy, `bench/hdmiwatch.py` zapisuje zdarzenia do pliku przez wiele godzin.
+
+Przypadek, do którego to powstało: przystawka Xiaomi przez 5-metrowy kabel HDMI. Dziennik pokazał pięć zaników
+w 45 minut, każdy o tym samym przebiegu (`NO SIGNAL` na wejściu, kilka krótkich powrotów, chwilowe `HDR:SDR`,
+powrót do tego samego formatu), bez zmiany trybu przed zanikiem i niezależnie od temperatury boxa. Po wymianie
+kabla na krótki: 0 zaników w 40 minut w tym samym trybie. Ten sam 5-metrowy kabel wpięty wprost do TV był stabilny,
+a PC (obraz nieszyfrowany) szedł przez niego cały dzień — wniosek roboczy: wejście repeatera ma mniejszy zapas niż
+telewizor, a przy szyfrowanym obrazie pojedynczy błąd na łączu kończy się ponownym zestawieniem połączenia.
+
+## v14.4 (2026-11-12): łącze z modułem Wi-Fi — stan HDMI, konsola i wgrywanie firmware bez kabla
+
+Format i protokół są opisane w `main/link.h`. W skrócie:
+
+- **W górę (ESP32 → BK):** po polu obrazu każda ramka SPI niesie 512-bajtowy blok pomocniczy: stan wejścia HDMI
+  (aktywne / brak, format, tryb HDR, licznik zaników i zmian formatu), wersję firmware i porcję wyjścia konsoli.
+  Gdy nie ma obrazu, idzie ramka bez pola (W = H = 0) z samym blokiem: 5 razy na sekundę, a przy podłączonej
+  konsoli co 16 ms.
+- **W dół (BK → ESP32):** w tej samej transmisji, po linii MISO, moduł Wi-Fi oddaje blok z porcją wejścia konsoli.
+  Robi to tylko wtedy, gdy do boxa podłączony jest klient konsoli; bez klienta SPI pracuje jak dotąd.
+- **Linia MISO jest na GPIO16.** Fabryczna konfiguracja ESP32 podaje `output_spi_miso = 19`, ale na GPIO19 nic nie
+  ma. Zmierzone: stan wymuszony na P17 modułu Wi-Fi pojawia się na GPIO16 (komenda `link scan` pokazuje piny
+  trzymane przez inny układ).
+- **Tunel:** jedna porcja naraz w każdym kierunku, powtarzana do potwierdzenia jej numeru przez drugą stronę; CRC16
+  na obu blokach. Po podłączeniu klienta i po restarcie ESP32 obie strony zerują numerację.
+- **Konsola:** wejście to wspólny strumień z UART0 i z tunelu; wszystko, co idzie na `stdout` (także logi), trafia
+  na UART0 i do tunelu. Te same komendy działają po obu drogach, łącznie z `upload`.
+- **Firmware na próbie:** obraz wgrany przez tunel startuje „na próbę”. Zostaje, jeśli po restarcie przyjdzie 20
+  poprawnych bloków z modułu Wi-Fi; inaczej po 120 s (albo przy restarcie przed potwierdzeniem) wraca poprzednia
+  partycja OTA.
+- **Ochrona przed pętlą restartów:** czwarty start z rzędu bez 30 s spokojnej pracy przełącza na drugą partycję OTA.
+- Nowe komendy: `link` (liczniki łącza, pierwsze bajty z MISO), `link dly <ns>`, `link scan`, `ver` (wersja,
+  partycja, wolna sterta).
+
+Narzędzia: `bench/esplink.py` otwiera port szeregowy albo `tcp://adres:2323`; skrypty z `bench/` i
+`esp32_upload.py` przyjmują taki adres zamiast `COM4`. Hasło konsoli: zmienna `SYNCBOX_CONSOLE_PASSWORD`.
+
+Pamięć: sterownik UART0 i bufory tunelu nie mieściły się w stercie (pierwsza wersja wpadła w pętlę restartów na
+`uart_driver_install`). Bufory diagnostyczne (`grid`, `glitch`, `upload`, `hdmi scope`, wzór testowy) są teraz brane
+ze sterty tylko na czas komendy; wolna sterta po starcie ok. 19,7 KB, najmniej 11,8 KB podczas `upload`.
+
+Wyniki (BK v17, ESP32 v14.4, 4K60 HDR10 z przystawki):
+
+| Test | Wynik |
+|---|---|
+| Czujniki w HA | „HDMI: wejście” = `3840x2160P60 HDR10`, „HDMI: zaniki” = 0 |
+| Konsola przez Wi-Fi: `params`, `grid`, `frames 4` | komplet (65 parametrów; 27 z 27 wierszy; 108 z 108 wierszy, 36,6 KB w 4,1 s); 0 błędnych bloków |
+| Obraz przy podłączonym kliencie bez komend | 59,9 kl./s, 117 zapisów taśmy/s, 0 ramek uciętych — jak bez klienta |
+| Obraz przy `grid` w pętli (91 KB odpowiedzi w 12 s) | 59,0 kl./s, 111 zapisów/s, 7 ramek uciętych w 9 s |
+| Wgranie firmware przez Wi-Fi (382 KB) | 19 s razem z restartem i potwierdzeniem |
+| Wgranie bez potwierdzenia (klient rozłączony) | po 120 s powrót do poprzedniej partycji, układ pracuje dalej |
+| Złe hasło konsoli | połączenie zamykane |
+
+Nie sprawdzone: ochrona przed pętlą restartów (tylko skompilowana). Czujnik „Sygnał HDMI” po zmianie w BK v17
+przy braku sygnału na wejściu przez 14 min pokazywał „brak” bez żadnego przeskoku.

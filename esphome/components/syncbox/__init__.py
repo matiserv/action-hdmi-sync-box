@@ -2,7 +2,7 @@
 
 from esphome import pins
 import esphome.codegen as cg
-from esphome.components import binary_sensor, sensor, text_sensor
+from esphome.components import binary_sensor, sensor, socket, text_sensor
 from esphome.components.light.effects import register_addressable_effect
 from esphome.components.light.types import AddressableLightEffect
 import esphome.config_validation as cv
@@ -16,6 +16,8 @@ from esphome.const import (
     CONF_MODE,
     CONF_NAME,
     CONF_NUMBER,
+    CONF_PASSWORD,
+    CONF_PORT,
     STATE_CLASS_MEASUREMENT,
 )
 
@@ -55,6 +57,9 @@ CONF_INTERPOLATION = "interpolation"
 CONF_VIDEO_FPS = "video_fps"
 CONF_LED_FPS = "led_fps"
 CONF_HDMI_SIGNAL = "hdmi_signal"
+CONF_HDMI_INPUT = "hdmi_input"
+CONF_HDMI_DROPOUTS = "hdmi_dropouts"
+CONF_ESP32_CONSOLE = "esp32_console"
 CONF_RESET_TIME = "reset_time"
 CONF_REFRESH_INTERVAL = "refresh_interval"
 CONF_WHITE_BALANCE = "white_balance"
@@ -144,7 +149,7 @@ VIDEO_SCHEMA = cv.Schema(
     {
         cv.Optional(CONF_ENABLED, default=True): cv.boolean,
         cv.Optional(CONF_SPI_MODE, default=0): cv.int_range(min=0, max=3),
-        cv.Optional(CONF_FRAME_SIZE, default=768): cv.int_range(min=3, max=4096),
+        cv.Optional(CONF_FRAME_SIZE, default=768): cv.int_range(min=3, max=8192),
         cv.Optional(CONF_GRID_WIDTH, default=16): cv.int_range(min=1, max=64),
         cv.Optional(CONF_GRID_HEIGHT, default=16): cv.int_range(min=1, max=64),
         cv.Optional(CONF_PIXEL_ORDER, default="RGB"): cv.one_of(*ORDERS, upper=True),
@@ -246,6 +251,14 @@ SATELLITE_SCHEMA = cv.All(cv.Schema(
     }
 ), _validate_satellite)
 
+def _console_sockets(config):
+    # serwer konsoli zajmuje jedno gniazdo nasluchujace i jedno polaczenie (ESPHome liczy z tego limity lwIP)
+    if CONF_ESP32_CONSOLE in config:
+        socket.consume_sockets(1, "syncbox_console", socket.SocketType.TCP_LISTEN)(config)
+        socket.consume_sockets(1, "syncbox_console")(config)
+    return config
+
+
 CONFIG_SCHEMA = cv.All(
     cv.Schema(
         {
@@ -275,9 +288,22 @@ CONFIG_SCHEMA = cv.All(
                 state_class=STATE_CLASS_MEASUREMENT,
             ),
             cv.Optional(CONF_HDMI_SIGNAL): binary_sensor.binary_sensor_schema(),
+            # Stan wejscia HDMI zglaszany przez ESP32 (firmware v14.4+): format i tryb HDR jako tekst, licznik zanikow.
+            cv.Optional(CONF_HDMI_INPUT): text_sensor.text_sensor_schema(),
+            cv.Optional(CONF_HDMI_DROPOUTS): sensor.sensor_schema(accuracy_decimals=0),
+            # Konsola ESP32 po sieci: serwer TCP, przez ktory dzialaja komendy konsoli i wgrywanie firmware ESP32
+            # (bench/*.py i esp32_upload.py przyjmuja adres tcp://IP:port zamiast portu COM). Haslo = pierwsza linia
+            # wyslana przez klienta; bez hasla kazdy w sieci lokalnej moze sterowac ESP32 i wgrac mu firmware.
+            cv.Optional(CONF_ESP32_CONSOLE): cv.Schema(
+                {
+                    cv.Optional(CONF_PORT, default=2323): cv.port,
+                    cv.Optional(CONF_PASSWORD, default=""): cv.string,
+                }
+            ),
         }
     ).extend(cv.COMPONENT_SCHEMA),
     cv.only_on(["bk72xx"]),
+    _console_sockets,
 )
 
 
@@ -368,6 +394,16 @@ async def to_code(config):
     if CONF_LED_FPS in config:
         s = await sensor.new_sensor(config[CONF_LED_FPS])
         cg.add(var.set_led_fps_sensor(s))
+    if CONF_HDMI_INPUT in config:
+        t = await text_sensor.new_text_sensor(config[CONF_HDMI_INPUT])
+        cg.add(var.set_hdmi_input_sensor(t))
+    if CONF_HDMI_DROPOUTS in config:
+        s = await sensor.new_sensor(config[CONF_HDMI_DROPOUTS])
+        cg.add(var.set_hdmi_dropouts_sensor(s))
+    if CONF_ESP32_CONSOLE in config:
+        c = config[CONF_ESP32_CONSOLE]
+        cg.add_define("SYNCBOX_CONSOLE")
+        cg.add(var.set_console(c[CONF_PORT], c[CONF_PASSWORD]))
     if CONF_HDMI_SIGNAL in config:
         b = await binary_sensor.new_binary_sensor(config[CONF_HDMI_SIGNAL])
         cg.add(var.set_signal_sensor(b))

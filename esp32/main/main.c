@@ -15,6 +15,11 @@
 #include "capture.h"
 #include "spi_out.h"
 #include "hdmi.h"
+#include "link.h"
+#include "esp_system.h"
+#include "esp_attr.h"
+#include "esp_rom_sys.h"
+#include "esp_timer.h"
 
 void console_init(void);
 
@@ -54,17 +59,48 @@ static void stats_task(void *arg)
     }
 }
 
+// Ochrona przed petla restartow: licznik w pamieci RTC (przetrwa restart programowy i panic, nie przetrwa wylaczenia
+// zasilania). Czwarty start z rzedu bez 30 s spokojnej pracy = ten obraz nie nadaje sie do uzytku, wraca druga partycja
+// OTA (poprzedni firmware). Bez tego bledny obraz wgrany przez konsole albo Wi-Fi wymagal przycisku i esptool.
+static RTC_NOINIT_ATTR uint32_t s_boot_magic;
+static RTC_NOINIT_ATTR uint32_t s_boot_count;
+
+static void boot_ok_cb(void *arg) { s_boot_count = 0; }
+
+static void boot_loop_guard(void)
+{
+    if (esp_reset_reason() == ESP_RST_POWERON || s_boot_magic != 0xB007C0DEu) {
+        s_boot_magic = 0xB007C0DEu;
+        s_boot_count = 0;
+    }
+    s_boot_count++;
+    if (s_boot_count >= 4) {
+        s_boot_count = 0;
+        const esp_partition_t *other = esp_ota_get_next_update_partition(NULL);
+        if (other != NULL && esp_ota_set_boot_partition(other) == ESP_OK) {      // sprawdza tez poprawnosc obrazu
+            esp_rom_printf("petla restartow: powrot do partycji %s\n", other->label);
+            esp_restart();
+        }
+    }
+    static esp_timer_handle_t t;
+    const esp_timer_create_args_t a = {.callback = boot_ok_cb, .name = "bootok"};
+    if (esp_timer_create(&a, &t) == ESP_OK) esp_timer_start_once(t, 30000000);
+}
+
 void app_main(void)
 {
+    boot_loop_guard();
     esp_err_t e = nvs_flash_init();
     if (e == ESP_ERR_NVS_NO_FREE_PAGES || e == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
         ESP_ERROR_CHECK(nvs_flash_init());
     }
     params_load();
+    link_init();
+    link_trial_boot();                        // firmware wgrany przez Wi-Fi: na probe albo powrot do poprzedniego
     {
         const esp_partition_t *run = esp_ota_get_running_partition();
-        ESP_LOGI(TAG, "syncbox ESP32 v14.2 start, partycja %s", run ? run->label : "?");
+        ESP_LOGI(TAG, "syncbox ESP32 v14.4 start, partycja %s", run ? run->label : "?");
     }
 
     esp_register_freertos_idle_hook_for_cpu(core1_no_sleep_hook, 1);

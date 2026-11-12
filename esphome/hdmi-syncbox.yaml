@@ -125,7 +125,7 @@ syncbox:
   video:
     enabled: true
     spi_mode: 0
-    frame_size: 3904        # rozmiar bufora: 16 B naglowka + najwieksze pole 48 x 27 x 3
+    frame_size: 4416        # rozmiar bufora: 16 B naglowka + najwieksze pole 48 x 27 x 3 + 512 B bloku pomocniczego ESP32
     grid_width: 48          # wymiary dla ramki bez naglowka; z naglowkiem uklad podaje ESP32
     grid_height: 27
     pixel_order: RGB
@@ -151,6 +151,18 @@ syncbox:
     name: "FPS wideo"
   led_fps:
     name: "FPS tasmy"
+  # Stan wejscia HDMI z ESP32 (firmware v14.4+): format i tryb HDR, licznik zanikow sygnalu.
+  hdmi_input:
+    name: "HDMI: wejscie"
+    icon: mdi:video-input-hdmi
+  hdmi_dropouts:
+    name: "HDMI: zaniki"
+    icon: mdi:alert-circle-outline
+  # Konsola ESP32 po sieci (komendy, strojenie, wgrywanie firmware ESP32 bez kabla): tcp://<adres boxa>:2323.
+  # Pierwsza linia wyslana przez klienta to haslo.
+  esp32_console:
+    port: 2323
+    password: !secret console_password
   hdmi_signal:
     name: "Sygnal HDMI"
 

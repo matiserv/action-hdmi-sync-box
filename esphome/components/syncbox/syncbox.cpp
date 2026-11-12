@@ -4,12 +4,13 @@
 
 #include <Arduino.h>
 #include <algorithm>
+#include <cerrno>
 #include <cmath>
 #include <cstring>
 
 #include "esphome/core/application.h"
 #include "esphome/core/log.h"
-#ifdef SYNCBOX_SATELLITES
+#if defined(SYNCBOX_SATELLITES) || defined(SYNCBOX_CONSOLE)
 #include "esphome/components/network/util.h"
 #endif
 
@@ -94,6 +95,12 @@ void SyncBox::setup() {
 #ifdef SYNCBOX_VIDEO
   if (this->video_enabled_) {
     this->rx_buf_ = new uint8_t[this->frame_size_];     // NOLINT
+    this->dn_buf_ = new uint8_t[DN_SEND];               // NOLINT
+    memset(this->dn_buf_, 0, DN_SEND);
+    this->con_up_.size = 8192;
+    this->con_up_.b = new uint8_t[this->con_up_.size];  // NOLINT
+    this->con_dn_.size = 4096;
+    this->con_dn_.b = new uint8_t[this->con_dn_.size];  // NOLINT
     this->frame_buf_ = new uint8_t[this->frame_size_];  // NOLINT
     memset(this->rx_buf_, 0, this->frame_size_);
     memset(this->frame_buf_, 0, this->frame_size_);
@@ -291,6 +298,7 @@ void SyncBox::push_black_() {
 void SyncBox::loop() {
   const uint32_t now = millis();
 #ifdef SYNCBOX_VIDEO
+  this->link_loop_();
   if (this->frame_ready_) {
     this->process_frame_();
     this->frame_ready_ = false;
@@ -309,7 +317,10 @@ void SyncBox::loop() {
   } else if (!this->sig_stale_ && (uint32_t) (now - this->sig_seen_ms_) >= this->signal_timeout_ms_) {
     this->sig_stale_ = true;
   }
-  const bool recent = (ft > 0) && !this->sig_stale_;
+  // ESP32 z firmware v14.4+ podaje stan wejscia wprost; bez sygnalu konwerter potrafi wystawiac przypadkowa
+  // synchronizacje i czujnik skakal. Starszy firmware (brak bloku pomocniczego) - jak dotad, po samych ramkach.
+  const bool input_ok = !this->esp_fresh_ || (this->esp_flags_ & 0x03) == 0x03;
+  const bool recent = (ft > 0) && !this->sig_stale_ && input_ok;
   if (!recent)
     this->signal_start_ms_ = 0;
   else if (this->signal_start_ms_ == 0)
@@ -783,6 +794,98 @@ void SyncBox::send_satellites_(const uint8_t *rgb, size_t num_leds, bool light_o
 #endif
 
 #ifdef SYNCBOX_VIDEO
+// CRC16 CCITT (0x1021, start 0xFFFF), po pol bajtu z tablicy 16 pozycji.
+static uint16_t crc16_(const uint8_t *d, size_t n) {
+  static const uint16_t T[16] = {0x0000, 0x1021, 0x2042, 0x3063, 0x4084, 0x50A5, 0x60C6, 0x70E7,
+                                 0x8108, 0x9129, 0xA14A, 0xB16B, 0xC18C, 0xD1AD, 0xE1CE, 0xF1EF};
+  uint16_t c = 0xFFFF;
+  while (n--) {
+    const uint8_t v = *d++;
+    c = (uint16_t) ((c << 4) ^ T[((c >> 12) ^ (v >> 4)) & 0x0F]);
+    c = (uint16_t) ((c << 4) ^ T[((c >> 12) ^ v) & 0x0F]);
+  }
+  return c;
+}
+
+// Blok pomocniczy z ESP32 (za polem obrazu). Wolane z watku SPI.
+bool SyncBox::parse_aux_(const uint8_t *a) {
+  if (a[0] != 'S' || a[1] != 'B' || a[2] != 'X' || a[3] != '1')
+    return false;
+  if (crc16_(a, AUX_LEN - 2) != (uint16_t) ((a[AUX_LEN - 2] << 8) | a[AUX_LEN - 1])) {
+    this->aux_bad_ = this->aux_bad_ + 1;
+    return false;
+  }
+  this->aux_gen_ = this->aux_gen_ + 1;
+  memcpy(this->aux_raw_, a, sizeof(this->aux_raw_));
+  this->aux_seen_ms_ = millis();
+  this->aux_gen_ = this->aux_gen_ + 1;
+  this->aux_frames_ = this->aux_frames_ + 1;
+  if (!this->tun_active_)
+    return true;
+  if (this->tun_resetting_) {
+    if (a[4] & 0x10)  // ESP32 wyzerowal swoja strone tunelu
+      this->tun_resetting_ = false;
+    return true;
+  }
+  if (a[4] & 0x20) {  // ESP32 dopiero wystartowal: numeracja porcji od zera po obu stronach
+    this->con_reset_ms_ = millis();
+    this->tun_resetting_ = true;
+    return true;
+  }
+  if (this->dn_len_ != 0 && a[22] == this->dn_seq_)
+    this->dn_len_ = 0;  // nasza porcja doszla
+  const uint16_t ul = (uint16_t) (a[24] | (a[25] << 8));
+  if (ul != 0 && ul <= AUX_LEN - 28 && a[21] != this->up_last_ && this->con_up_.space() >= ul) {
+    this->con_up_.write(a + 26, ul);
+    this->up_last_ = a[21];
+  }
+  return true;
+}
+
+// Blok zwrotny dla ESP32 (linia MISO). Zwraca dlugosc do wyslania; 0 = nic (nie ma klienta konsoli), wtedy SPI pracuje
+// tylko na odbior, dokladnie jak przed v17. Wolane z watku SPI przed uzbrojeniem transferu.
+uint16_t SyncBox::build_dn_() {
+  if (!this->tun_active_ || this->dn_buf_ == nullptr)
+    return 0;
+  uint8_t *p = this->dn_buf_ + 8;  // 8 bajtow zerowych z przodu: pierwsze bajty nadajnika slave bywaja zgubione
+  uint16_t len = 0;
+  uint8_t flags = 0x01;
+  if (this->tun_resetting_) {
+    flags |= 0x02;
+    if (!this->reset_applied_) {
+      this->con_dn_.drop_all();
+      this->dn_len_ = 0;
+      this->dn_seq_ = 0;
+      this->up_last_ = 0;
+      this->reset_applied_ = true;
+    }
+  } else {
+    this->reset_applied_ = false;
+    if (this->dn_len_ == 0) {
+      const uint32_t n = this->con_dn_.read(this->dn_pay_, DN_MAX);
+      if (n != 0) {
+        this->dn_len_ = (uint16_t) n;
+        this->dn_seq_ = this->dn_seq_ == 255 ? 1 : (uint8_t) (this->dn_seq_ + 1);
+      }
+    }
+    len = this->dn_len_;
+  }
+  p[0] = 'S';
+  p[1] = 'B';
+  p[2] = 'D';
+  p[3] = '1';
+  p[4] = flags;
+  p[5] = this->dn_seq_;
+  p[6] = this->up_last_;
+  p[7] = (uint8_t) len;
+  p[8] = (uint8_t) (len >> 8);
+  memcpy(p + 9, this->dn_pay_, len);
+  const uint16_t crc = crc16_(p, 9 + (size_t) len);
+  p[9 + len] = (uint8_t) (crc >> 8);
+  p[10 + len] = (uint8_t) crc;
+  return DN_SEND;
+}
+
 void SyncBox::spi_task_() {
   struct spi_message msg;
   const uint16_t fs = this->frame_size_;
@@ -793,22 +896,27 @@ void SyncBox::spi_task_() {
     this->rx_buf_[fs - 3] = 0xA5;
     if (fs >= 19)
       this->rx_buf_[15] = 0;  // koniec naglowka: transfer krotszy niz naglowek nie przejdzie na starych danych
-    msg.send_buf = nullptr;
-    msg.send_len = 0;
+    const uint16_t tx_len = this->build_dn_();
+    msg.send_buf = tx_len != 0 ? this->dn_buf_ : nullptr;
+    msg.send_len = tx_len;
     msg.recv_buf = this->rx_buf_;
     msg.recv_len = fs;
     bk_spi_slave_dma_xfer(&msg);  // blokuje do odebrania fs bajtów lub do końca CS
     const bool complete =
         !(this->rx_buf_[fs - 1] == 0xA5 && this->rx_buf_[fs - 2] == 0x5A && this->rx_buf_[fs - 3] == 0xA5);
+    const uint8_t *h = this->rx_buf_;
+    const bool hdr_ok = fs >= 19 && h[0] == 'S' && h[1] == 'B' && h[2] == 'G' && h[3] == '2' && h[6] == (uint8_t) ~h[4] &&
+                        h[7] == (uint8_t) ~h[5] && h[12] == 0x5A && h[13] == 0xA5 && h[14] == 0xC3 && h[15] == 0x3C &&
+                        (h[11] & 1);
+    const uint32_t n = hdr_ok ? (uint32_t) h[4] * h[5] * 3u : 0;
     if (!complete) {
       // Ramka krotsza niz bufor (ESP32 wysyla naglowek + tyle bajtow, ile ma pole): przyjmij, jesli naglowek
-      // jest poprawny, pole miesci sie w buforze i zgadza sie suma kontrolna.
-      const uint8_t *h = this->rx_buf_;
+      // jest poprawny, pole miesci sie w buforze i zgadza sie suma kontrolna. Pole 0 x 0 = ramka bez obrazu.
       bool ok = false;
-      if (fs >= 19 && h[0] == 'S' && h[1] == 'B' && h[2] == 'G' && h[3] == '2' && h[6] == (uint8_t) ~h[4] &&
-          h[7] == (uint8_t) ~h[5] && h[12] == 0x5A && h[13] == 0xA5 && h[14] == 0xC3 && h[15] == 0x3C && (h[11] & 1)) {
-        const uint32_t n = (uint32_t) h[4] * h[5] * 3u;
-        if (n >= 3 && 16u + n <= (uint32_t) fs) {
+      if (hdr_ok && 16u + n <= (uint32_t) fs) {
+        if (n == 0) {
+          ok = true;
+        } else if (n >= 3) {
           uint32_t sum = 0;
           for (uint32_t i = 0; i < n; i++)
             sum += h[16 + i];
@@ -820,6 +928,11 @@ void SyncBox::spi_task_() {
         continue;
       }
     }
+    // blok pomocniczy zaraz za polem (firmware ESP32 v14.4+): stan wejscia HDMI i tunel konsoli
+    if (hdr_ok && 16u + n + AUX_LEN <= (uint32_t) fs)
+      this->parse_aux_(h + 16 + n);
+    if (hdr_ok && n == 0)
+      continue;  // ramka bez obrazu nie jest klatka wideo
     this->frames_total_++;
     this->last_frame_ms_ = millis();
     if (!this->frame_ready_) {
@@ -831,6 +944,186 @@ void SyncBox::spi_task_() {
     }
   }
 }
+
+// Stan z ESP32 -> czujniki i log; obsluga klienta konsoli. Wolane z loop().
+void SyncBox::link_loop_() {
+  const uint32_t now = millis();
+  uint8_t st[24];
+  uint32_t g0, g1;
+  int tries = 0;
+  do {  // kopia spojna: watek SPI zwieksza aux_gen_ przed i po zapisie
+    g0 = this->aux_gen_;
+    memcpy(st, this->aux_raw_, sizeof(st));
+    g1 = this->aux_gen_;
+  } while ((g0 != g1 || (g0 & 1)) && ++tries < 4);
+  const bool ever = this->aux_frames_ != 0;
+  this->esp_fresh_ = ever && (uint32_t) (now - this->aux_seen_ms_) < 1500;
+  if (this->esp_fresh_ && tries < 4) {
+    this->esp_flags_ = st[4];
+    if (this->esp_ver_logged_ != st[20]) {
+      this->esp_ver_logged_ = st[20];
+      ESP_LOGI(TAG, "ESP32: firmware v%u.%u%s", st[20] / 10, st[20] % 10, (st[4] & 0x08) ? " (na próbie)" : "");
+    }
+    const uint16_t drops = (uint16_t) (st[12] | (st[13] << 8));
+    if (!this->esp_dropouts_known_ || drops != this->esp_dropouts_) {
+      if (this->esp_dropouts_known_ && drops > this->esp_dropouts_)
+        ESP_LOGW(TAG, "HDMI: zanik sygnału na wejściu (od startu ESP32: %u)", drops);
+      this->esp_dropouts_ = drops;
+      this->esp_dropouts_known_ = true;
+#ifdef USE_SENSOR
+      if (this->hdmi_dropouts_sensor_ != nullptr)
+        this->hdmi_dropouts_sensor_->publish_state(drops);
+#endif
+    }
+  }
+  if (ever && (uint32_t) (now - this->link_pub_ms_) >= 500) {
+    this->link_pub_ms_ = now;
+    char txt[48];
+    if (!this->esp_fresh_) {
+      snprintf(txt, sizeof(txt), "brak danych z ESP32");
+    } else if (!(st[4] & 0x01)) {
+      snprintf(txt, sizeof(txt), "brak sygnału");
+    } else {
+      static const char *const HDR[] = {"SDR", "HDR10", "HDR10+", "Dolby Vision", "HLG", "HDR?"};
+      const uint16_t w = (uint16_t) (st[6] | (st[7] << 8)), hh = (uint16_t) (st[8] | (st[9] << 8));
+      snprintf(txt, sizeof(txt), "%ux%u%c%u %s", w, hh, st[11] >= 32 && st[11] < 127 ? (char) st[11] : '?', st[10],
+               st[5] < 6 ? HDR[st[5]] : "?");
+    }
+    if (this->hdmi_published_ != txt) {
+      this->hdmi_published_ = txt;
+      ESP_LOGI(TAG, "HDMI wejście: %s", txt);
+#ifdef USE_TEXT_SENSOR
+      if (this->hdmi_input_sensor_ != nullptr)
+        this->hdmi_input_sensor_->publish_state(txt);
+#endif
+    }
+  }
+  this->console_loop_();
+}
+
+#ifdef SYNCBOX_CONSOLE
+void SyncBox::console_close_(const char *why) {
+  this->tun_active_ = false;
+  this->con_client_.reset();
+  ESP_LOGI(TAG, "Konsola ESP32: klient rozłączony (%s)", why);
+}
+
+// Serwer TCP konsoli ESP32: bajty od klienta ida tunelem do konsoli ESP32, wyjscie konsoli wraca do klienta.
+// Jeden klient naraz. Gdy klient jest podlaczony, do kazdej ramki SPI dochodzi blok zwrotny po MISO.
+void SyncBox::console_loop_() {
+  if (this->console_port_ == 0)
+    return;
+  if (!this->con_server_) {
+    if (this->con_server_failed_ || !network::is_connected())
+      return;
+    this->con_server_ = socket::socket_ip(SOCK_STREAM, 0);
+    bool ok = static_cast<bool>(this->con_server_);
+    if (ok) {
+      int en = 1;
+      this->con_server_->setsockopt(SOL_SOCKET, SO_REUSEADDR, &en, sizeof(en));
+      this->con_server_->setblocking(false);
+      struct sockaddr_storage sa;
+      const socklen_t sl = socket::set_sockaddr_any((struct sockaddr *) &sa, sizeof(sa), this->console_port_);
+      ok = sl != 0 && this->con_server_->bind((struct sockaddr *) &sa, sl) == 0 && this->con_server_->listen(1) == 0;
+    }
+    if (!ok) {
+      ESP_LOGE(TAG, "Konsola ESP32: nie można otworzyć portu %u", this->console_port_);
+      this->con_server_.reset();
+      this->con_server_failed_ = true;
+      return;
+    }
+    ESP_LOGI(TAG, "Konsola ESP32: port TCP %u%s", this->console_port_,
+             this->console_password_.empty() ? " (BEZ HASŁA)" : "");
+  }
+  if (!this->con_client_) {
+    struct sockaddr_storage src;
+    socklen_t al = sizeof(src);
+    auto c = this->con_server_->accept((struct sockaddr *) &src, &al);
+    if (!c)
+      return;
+    int en = 1;
+    c->setsockopt(IPPROTO_TCP, TCP_NODELAY, &en, sizeof(en));
+    c->setblocking(false);
+    this->con_client_ = std::move(c);
+    this->con_authed_ = this->console_password_.empty();
+    this->con_auth_buf_.clear();
+    this->con_up_.drop_all();
+    this->tun_resetting_ = true;  // obie strony tunelu zaczynaja od zera
+    this->tun_active_ = true;
+    this->con_reset_ms_ = millis();
+    ESP_LOGI(TAG, "Konsola ESP32: klient podłączony");
+    return;
+  }
+  if (this->tun_resetting_) {
+    // czekamy, az ESP32 potwierdzi zerowanie tunelu (2-3 ramki); bez odpowiedzi (stary firmware ESP32, brak linii
+    // MISO) klient dostaje komunikat i jest rozlaczany, zeby nie blokowal portu
+    if ((uint32_t) (millis() - this->con_reset_ms_) > 3000) {
+      static const char MSG[] = "ERR ESP32 nie odpowiada na laczu zwrotnym\n";
+      this->con_client_->write(MSG, sizeof(MSG) - 1);
+      this->tun_resetting_ = false;
+      this->console_close_("ESP32 nie odpowiada");
+    }
+    return;
+  }
+  static uint8_t buf[1024];
+  // klient -> ESP32
+  uint32_t want = this->con_authed_ ? this->con_dn_.space() : 64;
+  if (want > sizeof(buf))
+    want = sizeof(buf);
+  if (want != 0) {
+    const ssize_t n = this->con_client_->read(buf, want);
+    if (n == 0) {
+      this->console_close_("koniec połączenia");
+      return;
+    }
+    if (n < 0) {
+      if (errno != EWOULDBLOCK && errno != EAGAIN) {
+        this->console_close_("błąd odczytu");
+        return;
+      }
+    } else if (this->con_authed_) {
+      this->con_dn_.write(buf, (uint32_t) n);
+    } else {
+      // pierwsza linia od klienta to haslo
+      for (ssize_t i = 0; i < n; i++) {
+        if (this->con_authed_) {
+          this->con_dn_.write(buf + i, 1);
+        } else if (buf[i] == '\n') {
+          if (this->con_auth_buf_ == this->console_password_) {
+            this->con_authed_ = true;
+          } else {
+            this->con_client_->write("ERR haslo\n", 10);
+            this->console_close_("złe hasło");
+            return;
+          }
+        } else if (buf[i] != '\r' && this->con_auth_buf_.size() < 80) {
+          this->con_auth_buf_.push_back((char) buf[i]);
+        }
+      }
+    }
+  }
+  // ESP32 -> klient
+  if (this->con_authed_) {
+    uint32_t n = this->con_up_.avail();
+    if (n > sizeof(buf))
+      n = sizeof(buf);
+    if (n != 0) {
+      for (uint32_t i = 0; i < n; i++)
+        buf[i] = this->con_up_.b[(this->con_up_.r + i) % this->con_up_.size];
+      const ssize_t w = this->con_client_->write(buf, n);
+      if (w > 0) {
+        this->con_up_.r = this->con_up_.r + (uint32_t) w;
+      } else if (w < 0 && errno != EWOULDBLOCK && errno != EAGAIN) {
+        this->console_close_("błąd zapisu");
+        return;
+      }
+    }
+  }
+}
+#else
+void SyncBox::console_loop_() {}
+void SyncBox::console_close_(const char *) {}
+#endif
 
 void SyncBox::update_crop_(const uint8_t *rows, const uint8_t *cols, const uint8_t *cols_mid) {
   // rows / cols: najjasniejsza skladowa w wierszu / kolumnie pola; cols_mid: to samo z wierszy wokol srodka ekranu
@@ -1327,6 +1620,11 @@ void SyncBox::interpolate_tick_(uint32_t now_us) {
 }
 #else
 void SyncBox::spi_task_() {}
+bool SyncBox::parse_aux_(const uint8_t *) { return false; }
+uint16_t SyncBox::build_dn_() { return 0; }
+void SyncBox::link_loop_() {}
+void SyncBox::console_loop_() {}
+void SyncBox::console_close_(const char *) {}
 void SyncBox::update_crop_(const uint8_t *, const uint8_t *, const uint8_t *) {}
 void SyncBox::cell_range_(uint8_t, uint8_t, uint8_t &xa, uint8_t &xb, uint8_t &ya, uint8_t &yb) const {
   xa = xb = ya = yb = 0;

@@ -282,3 +282,40 @@ Obsługa jednego satelity (liczenie i `sendto`) trwa średnio 1,9 ms, najdłuże
 przez sumę kontrolną) rosną proporcjonalnie do liczby pakietów, ok. 2 % pakietów, niezależnie od tego, w której
 części okresu klatki pakiet wychodzi. Przyczyna nie jest ustalona; przesunięcie zapisu pośredniego taśmy jej nie
 usunęło. `max_fps: 30` na obu lampach zmniejsza stratę o połowę.
+
+## v17 (2026-11-12): stan HDMI z ESP32, konsola ESP32 po sieci
+
+Wymaga firmware ESP32 v14.4 lub nowszego (starszy działa jak dotąd, bez nowych funkcji). Format łącza:
+`esp32/main/link.h`.
+
+```yaml
+syncbox:
+  video:
+    frame_size: 4416          # 16 B naglowka + pole 48 x 27 x 3 + 512 B bloku pomocniczego ESP32
+  hdmi_input:                 # czujnik tekstowy: "3840x2160P60 HDR10", "brak sygnału", "brak danych z ESP32"
+    name: "HDMI: wejscie"
+  hdmi_dropouts:              # licznik zanikow sygnalu na wejsciu od startu ESP32
+    name: "HDMI: zaniki"
+  esp32_console:              # serwer TCP konsoli ESP32
+    port: 2323
+    password: !secret console_password
+```
+
+- **Stan wejścia HDMI:** ESP32 dokleja do każdej ramki blok z formatem wejścia, trybem HDR i licznikami. Zmiana
+  formatu i każdy zanik trafiają też do logu („HDMI wejście: …”, „HDMI: zanik sygnału na wejściu”).
+- **Czujnik „Sygnał HDMI”:** przy ESP32 v14.4 „jest” wymaga dodatkowo, żeby ESP32 zgłaszał aktywne wejście i VSync.
+  Wcześniej liczyły się same ramki, a bez sygnału konwerter wystawia przypadkową synchronizację i czujnik skakał.
+  Sprawdzone 2026-11-12: bez sygnału na wejściu czujnik przez 14 min pokazywał „brak” bez żadnego przeskoku.
+- **Konsola ESP32 po sieci:** jeden klient TCP naraz; pierwsza linia od klienta to hasło. Bajty od klienta idą do
+  konsoli ESP32, jej wyjście wraca do klienta — tak samo jak po UART, łącznie z komendą `upload`, czyli wgrywaniem
+  firmware ESP32 (`esp32_upload.py tcp://adres:2323 firmware.bin`). Bez hasła każdy w sieci lokalnej może sterować
+  ESP32 i wgrać mu firmware, więc hasło należy ustawić.
+- **Nadawanie do ESP32 (linia MISO, P17)** jest włączane tylko na czas połączenia klienta. Bez klienta transfer SPI
+  jest wyłącznie odbiorczy, jak przed v17.
+- Ramka bez pola (W = H = 0) niesie sam blok pomocniczy i nie liczy się jako klatka wideo.
+- Gdy ESP32 nie potwierdzi zestawienia tunelu w 3 s (stary firmware), klient dostaje
+  `ERR ESP32 nie odpowiada na laczu zwrotnym` i jest rozłączany.
+- ESPHome liczy limity lwIP z deklaracji komponentów; serwer konsoli zgłasza jedno gniazdo nasłuchujące i jedno
+  połączenie (`socket.consume_sockets`).
+
+Pomiary są w `esp32/README.md`, sekcja v14.4.

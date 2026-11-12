@@ -24,7 +24,7 @@
 #ifdef USE_TEXT_SENSOR
 #include "esphome/components/text_sensor/text_sensor.h"
 #endif
-#ifdef SYNCBOX_SATELLITES
+#if defined(SYNCBOX_SATELLITES) || defined(SYNCBOX_CONSOLE)
 #include "esphome/components/socket/socket.h"
 #endif
 
@@ -248,6 +248,18 @@ class SyncBox : public Component {
   // cialo watku SPI (publiczne tylko dla trampoliny C)
   void spi_task_();
 
+  // ---- lacze z ESP32 poza obrazem: stan wejscia HDMI, konsola ESP32 po sieci ----
+#ifdef USE_TEXT_SENSOR
+  void set_hdmi_input_sensor(text_sensor::TextSensor *t) { this->hdmi_input_sensor_ = t; }
+#endif
+#ifdef USE_SENSOR
+  void set_hdmi_dropouts_sensor(sensor::Sensor *s) { this->hdmi_dropouts_sensor_ = s; }
+#endif
+  void set_console(uint16_t port, const std::string &password) {
+    this->console_port_ = port;
+    this->console_password_ = password;
+  }
+
  protected:
   void build_sequence_();
   void process_frame_();
@@ -341,6 +353,72 @@ class SyncBox : public Component {
   volatile uint32_t last_frame_ms_{0};
   uint32_t frames_out_{0};
   void *spi_thread_{nullptr};
+
+  // ---- lacze z ESP32 (opis formatu: esp32/main/link.h) ----
+  // Bufor pierscieniowy: jeden watek pisze, drugi czyta; liczniki rosna bez konca, indeks = licznik % rozmiar.
+  struct Ring {
+    uint8_t *b{nullptr};
+    uint32_t size{0};
+    volatile uint32_t w{0}, r{0};
+    uint32_t avail() const { return this->w - this->r; }
+    uint32_t space() const { return this->size - (this->w - this->r); }
+    void write(const uint8_t *d, uint32_t n) {
+      for (uint32_t i = 0; i < n; i++)
+        this->b[(this->w + i) % this->size] = d[i];
+      this->w = this->w + n;
+    }
+    uint32_t read(uint8_t *d, uint32_t max) {
+      uint32_t n = this->avail();
+      if (n > max)
+        n = max;
+      for (uint32_t i = 0; i < n; i++)
+        d[i] = this->b[(this->r + i) % this->size];
+      this->r = this->r + n;
+      return n;
+    }
+    void drop_all() { this->r = this->w; }  // tylko strona czytajaca
+  };
+  static const uint16_t AUX_LEN = 512;
+  static const uint16_t DN_MAX = 1024;
+  static const uint16_t DN_SEND = 1044;  // 8 bajtow zerowych + 9 naglowka + DN_MAX + 2 CRC, zaokraglone do 4
+  bool parse_aux_(const uint8_t *aux);
+  uint16_t build_dn_();
+  void link_loop_();
+  void console_loop_();
+  void console_close_(const char *why);
+  uint8_t aux_raw_[24]{};              // ostatni stan z ESP32; pisze watek SPI
+  volatile uint32_t aux_gen_{0};       // parzysty = aux_raw_ spojny
+  volatile uint32_t aux_seen_ms_{0};
+  volatile uint32_t aux_frames_{0}, aux_bad_{0};
+  uint8_t *dn_buf_{nullptr};           // blok zwrotny (MISO)
+  uint8_t dn_pay_[DN_MAX]{};           // porcja w dol czekajaca na potwierdzenie
+  uint16_t dn_len_{0};
+  uint8_t dn_seq_{0}, up_last_{0};
+  volatile bool tun_active_{false}, tun_resetting_{false};
+  bool reset_applied_{false};
+  Ring con_up_, con_dn_;               // ESP32 -> klient (pisze watek SPI), klient -> ESP32 (pisze petla)
+  uint16_t console_port_{0};
+  std::string console_password_;
+#ifdef SYNCBOX_CONSOLE
+  std::unique_ptr<socket::Socket> con_server_, con_client_;
+#endif
+  bool con_server_failed_{false}, con_authed_{false};
+  uint32_t con_reset_ms_{0};
+  std::string con_auth_buf_;
+  // to, co petla wie o ESP32 (kopia aux_raw_)
+  bool esp_fresh_{false};
+  uint8_t esp_flags_{0};
+  uint8_t esp_ver_logged_{0};
+  uint16_t esp_dropouts_{0};
+  bool esp_dropouts_known_{false};
+  std::string hdmi_published_;
+  uint32_t link_pub_ms_{0};
+#ifdef USE_TEXT_SENSOR
+  text_sensor::TextSensor *hdmi_input_sensor_{nullptr};
+#endif
+#ifdef USE_SENSOR
+  sensor::Sensor *hdmi_dropouts_sensor_{nullptr};
+#endif
   bool spi_started_{false};
 
   Crop crop_{0, 0, 15, 15};

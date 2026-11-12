@@ -10,7 +10,7 @@ import sys
 import time
 import urllib.request
 
-import serial
+from esplink import open_port
 
 URL = "http://localhost:8765"
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -31,13 +31,7 @@ def page_open():
 
 class Esp:
     def __init__(self, port):
-        self.s = serial.Serial()
-        self.s.port = port
-        self.s.baudrate = 115200
-        self.s.timeout = 0.05
-        self.s.rts = False
-        self.s.dtr = False
-        self.s.open()
+        self.s = open_port(port)      # COMx albo tcp://adres:2323 (konsola przez Wi-Fi)
 
     def cmd(self, c, wait=1.0):
         self.s.reset_input_buffer()

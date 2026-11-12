@@ -9,3 +9,6 @@ uint32_t spi_out_frames_sent(void);
 float spi_out_fps(void);
 // Wymuszenie nowego zegara (po "set spi_hz" z konsoli).
 void spi_out_reconfigure(void);
+// Kompensacja opoznienia linii MISO (ns): dane z BK przychodza z opoznieniem wzgledem zegara.
+void spi_out_set_input_delay(int ns);
+int spi_out_get_input_delay(void);

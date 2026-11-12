@@ -5,7 +5,13 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/uart.h"
+#include "esp_rom_sys.h"
+#include "driver/gpio.h"
 #include "driver/uart_vfs.h"
+#include "esp_vfs.h"
+#include "esp_heap_caps.h"
+#include <sys/stat.h>
+#include "link.h"
 #include "esp_log.h"
 #include "esp_system.h"
 #include "esp_ota_ops.h"
@@ -43,6 +49,10 @@ static void cmd_help(void)
            "  hdmi scope [ms]      - przebieg linii RX UART2 (czasy stanow), do ustalenia predkosci\n"
            "  hdmi <hex bajty>     - wyslij bajty po UART2 (eksperyment; fabryczny soft nic nie nadaje)\n"
            "  hdmi reset           - impuls resetu GSV2002 (GPIO22)\n"
+           "  hdmi log [clear]     - dziennik zdarzen HDMI: zmiany formatu/HDR/sygnalu wg MCU, zaniki VSync\n"
+           "  link | link dly <ns> - stan lacza z modulem Wi-Fi (konsola i wgrywanie przez Wi-Fi) / opoznienie MISO\n"
+           "  link scan            - stan wolnych pinow z podciaganiem w dol i w gore (szukanie linii z modulu Wi-Fi)\n"
+           "  ver                  - wersja firmware, partycja, czy firmware jest na probie\n"
            "  hprof [krok_us] [ch] - profil linii: kod ADC kanalu ch (0/1/2=R/G/B) co krok_us od HSync\n"
            "  chtest               - test pamieci kanalu: R,G,G,B,B,R w kolejnych liniach, ta sama chwila\n"
            "  upload <bajty> <crc32> - nowy firmware (firmware.bin) surowo po UART0 do drugiej partycji OTA, potem restart\n"
@@ -157,7 +167,8 @@ static void cmd_hdmi_status(void)
 // Przebieg linii RX UART2: czasy kolejnych stanow. Z najkrotszego stanu niskiego wynika predkosc transmisji.
 static void cmd_hdmi_scope(const char *ms_s)
 {
-    static uint32_t dur[400];
+    uint32_t *dur = malloc(400 * sizeof(uint32_t));
+    if (dur == NULL) { printf("brak pamieci\n"); return; }
     uint32_t ms = ms_s ? (uint32_t)atoi(ms_s) : 300;
     if (ms < 10) ms = 10;
     if (ms > 800) ms = 800;       // petla pomiaru nie oddaje procesora; dluzsza zatrzymalaby ramki na czas gaszenia tasmy
@@ -175,6 +186,7 @@ static void cmd_hdmi_scope(const char *ms_s)
     printf("odcinki [us] (L=niski, H=wysoki):");
     for (int i = 0; i < n && i < 120; i++) printf(" %c%lu", ((i & 1) ? !first : first) ? 'H' : 'L', (unsigned long)dur[i]);
     putchar('\n');
+    free(dur);
 }
 
 // Test kontrolera cyfrowego ADC z odczytem FIFO I2S0 przez CPU (bez DMA). Probkowanie wideo stoi na czas testu.
@@ -237,22 +249,26 @@ static void cmd_digrate(void)
 
 static void cmd_glitch(void)
 {
-    static uint8_t a[PIX_BYTES_MAX], b[PIX_BYTES_MAX];
+    uint8_t *a = malloc(PIX_BYTES_MAX), *b = malloc(PIX_BYTES_MAX);      // ze sterty tylko na czas komendy
+    if (a == NULL || b == NULL) { free(a); free(b); printf("brak pamieci\n"); return; }
     uint32_t ma, mb, cols[GRID_W_MAX];
     uint32_t n = capture_get_glitch(a, b, &ma, &mb, cols);
     printf("blyskow (skok sredniej > 60): %lu\n", (unsigned long)n);
-    if (n == 0) return;
+    if (n == 0) { free(a); free(b); return; }
     printf("kolumny jasniejsze o >100: ");
     for (int x = 0; x < GRID_W; x++) printf("%lu ", (unsigned long)cols[x]);
     printf("\nramka przed (srednia %lu):\n", (unsigned long)ma);
     print_frame(a);
     printf("ramka blysku (srednia %lu):\n", (unsigned long)mb);
     print_frame(b);
+    free(a);
+    free(b);
 }
 
 static void cmd_grid(bool ascii)
 {
-    static uint8_t f[PIX_BYTES_MAX];
+    uint8_t *f = malloc(PIX_BYTES_MAX);
+    if (f == NULL) { printf("brak pamieci\n"); return; }
     capture_get_frame(f);
     static const char ramp[] = " .:-=+*#%@";
     for (int y = 0; y < GRID_H; y++) {
@@ -268,6 +284,7 @@ static void cmd_grid(bool ascii)
         }
         putchar('\n');
     }
+    free(f);
 }
 
 // Profil linii: srednia wartosc ADC (kanal G) w funkcji czasu od wejscia w przerwanie HSync.
@@ -317,12 +334,14 @@ static void cmd_upload(uint32_t len, uint32_t crc_expected)
     if (e != ESP_OK) { printf("ERR ota_begin %s\n", esp_err_to_name(e)); return; }
     printf("READY %s %lu\n", part->label, (unsigned long)len);
     fflush(stdout);
-    static uint8_t buf[4096];
+    static uint8_t *buf = NULL;                 // 4 KB ze sterty, tylko gdy ktos wgrywa firmware
+    if (buf == NULL) buf = malloc(4096);
+    if (buf == NULL) { printf("ERR brak pamieci\n"); esp_ota_abort(h); return; }
     uint32_t got = 0, crc = 0;
     // resztki konca linii komendy (LF po CR) nie sa czescia obrazu: obraz zaczyna sie od 0xE9
     for (int i = 0; i < 4; i++) {
         uint8_t b;
-        if (uart_read_bytes(UART_NUM_0, &b, 1, pdMS_TO_TICKS(3000)) != 1) { printf("ERR brak danych\n"); esp_ota_abort(h); return; }
+        if (link_in_read(&b, 1, pdMS_TO_TICKS(3000)) != 1) { printf("ERR brak danych\n"); esp_ota_abort(h); return; }
         if (b == 13 || b == 10) continue;
         buf[0] = b; got = 1; crc = esp_rom_crc32_le(0, buf, 1);
         if (esp_ota_write(h, buf, 1) != ESP_OK) { printf("ERR ota_write pierwszy bajt\n"); esp_ota_abort(h); return; }
@@ -330,8 +349,8 @@ static void cmd_upload(uint32_t len, uint32_t crc_expected)
     }
     while (got < len) {
         uint32_t want = len - got;
-        if (want > sizeof(buf)) want = sizeof(buf);
-        int n = uart_read_bytes(UART_NUM_0, buf, want, pdMS_TO_TICKS(5000));
+        if (want > 4096) want = 4096;
+        int n = (int) link_in_read(buf, want, pdMS_TO_TICKS(5000));
         if (n <= 0) { printf("ERR timeout po %lu B\n", (unsigned long)got); esp_ota_abort(h); return; }
         crc = esp_rom_crc32_le(crc, buf, n);
         e = esp_ota_write(h, buf, n);
@@ -343,8 +362,12 @@ static void cmd_upload(uint32_t len, uint32_t crc_expected)
     if (e != ESP_OK) { printf("ERR ota_end %s\n", esp_err_to_name(e)); return; }
     e = esp_ota_set_boot_partition(part);
     if (e != ESP_OK) { printf("ERR set_boot %s\n", esp_err_to_name(e)); return; }
-    printf("OK %s, restart\n", part->label);
-    vTaskDelay(pdMS_TO_TICKS(200));
+    // Wgrane przez tunel: nowy obraz idzie "na probe" (wroci poprzedni, jesli po restarcie lacze z BK nie zadziala).
+    const bool tunnel = link_last_input_from_tunnel() && link_attached();
+    if (tunnel) link_trial_arm();
+    printf("OK %s, restart%s\n", part->label, tunnel ? " (na probe)" : "");
+    fflush(stdout);
+    vTaskDelay(pdMS_TO_TICKS(tunnel ? 1500 : 200));    // przez tunel odpowiedz potrzebuje kilku ramek
     esp_restart();
 }
 
@@ -418,12 +441,94 @@ static void handle_line(char *line)
         if (!v) { cmd_hdmi_status(); return; }
         if (!strcmp(v, "scope")) { cmd_hdmi_scope(strtok(NULL, " \t")); return; }
         if (!strcmp(v, "reset")) { hdmi_reset_pulse(); return; }
+        if (!strcmp(v, "log")) { char *a = strtok(NULL, " \t"); hdmi_log_print(a && !strcmp(a, "clear")); return; }
         uint8_t bytes[64];
         int n = 0;
         while (v && n < 64) { bytes[n++] = (uint8_t)strtol(v, NULL, 16); v = strtok(NULL, " \t"); }
         if (n) { hdmi_uart_send(bytes, n); printf("wyslano %d B\n", n); }
+    } else if (!strcmp(cmd, "ver")) {
+        const esp_partition_t *run = esp_ota_get_running_partition();
+        printf("syncbox ESP32 v%d.%d, partycja %s, proba %u; sterta: wolne %lu B, najmniej %lu B, najwiekszy blok %lu B\n",
+               LINK_FW_VERSION / 10, LINK_FW_VERSION % 10, run ? run->label : "?", (unsigned) link_trial_state(),
+               (unsigned long) esp_get_free_heap_size(), (unsigned long) esp_get_minimum_free_heap_size(),
+               (unsigned long) heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT));
+    } else if (!strcmp(cmd, "link")) {
+        char *v = strtok(NULL, " \t");
+        if (v && !strcmp(v, "dly")) {
+            char *a = strtok(NULL, " \t");
+            if (a) spi_out_set_input_delay(atoi(a));
+            printf("opoznienie MISO %d ns\n", spi_out_get_input_delay());
+            return;
+        }
+        if (v && !strcmp(v, "scan")) {
+            // Stan wolnych pinow ESP32 z podciaganiem w dol i w gore: pin trzymany przez inny uklad nie idzie za podciaganiem.
+            static const uint8_t pins[] = {2, 12, 13, 14, 15, 16, 17, 19, 21, 23};
+            printf("pin: odczyt z podciaganiem w dol / w gore\n");
+            for (size_t i = 0; i < sizeof(pins); i++) {
+                const gpio_num_t g = (gpio_num_t) pins[i];
+                if (g != PIN_SPI_MISO) { gpio_reset_pin(g); gpio_set_direction(g, GPIO_MODE_INPUT); }
+                gpio_set_pull_mode(g, GPIO_PULLDOWN_ONLY);
+                vTaskDelay(pdMS_TO_TICKS(20));
+                const int d = gpio_get_level(g);
+                gpio_set_pull_mode(g, GPIO_PULLUP_ONLY);
+                vTaskDelay(pdMS_TO_TICKS(20));
+                const int u = gpio_get_level(g);
+                gpio_set_pull_mode(g, GPIO_FLOATING);
+                printf("  GPIO%-2d %d / %d%s\n", pins[i], d, u, d == u ? (d ? "   <- trzymany w stanie 1" : "   <- trzymany w stanie 0") : "");
+            }
+            printf("  GPIO36 %d, GPIO37 %d, GPIO38 %d (tylko wejscia, bez podciagania)\n", gpio_get_level(36), gpio_get_level(37), gpio_get_level(38));
+            return;
+        }
+        link_stats_t st;
+        link_get_stats(&st);
+        printf("lacze z BK: bloki w dol poprawne %lu, bledne %lu, bez znacznika %lu; porcje w gore %lu, w dol %lu; "
+               "odrzucone bajty wyjscia %lu; konsola po Wi-Fi %s; opoznienie MISO %d ns\n",
+               (unsigned long) st.dn_ok, (unsigned long) st.dn_bad, (unsigned long) st.dn_none, (unsigned long) st.up_chunks,
+               (unsigned long) st.dn_chunks, (unsigned long) st.out_dropped, st.attached ? "podlaczona" : "nie",
+               spi_out_get_input_delay());
+        printf("ostatnie bajty z MISO:");
+        for (int i = 0; i < 16; i++) printf(" %02X", st.raw[i]);
+        printf("\n");
     } else {
         printf("nieznana komenda: %s (help)\n", cmd);
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Wyjscie: wszystko, co idzie na stdout (takze logi), trafia na UART0 i - gdy po stronie BK podlaczony jest klient -
+// do tunelu konsoli. Wejscie: wspolny strumien bajtow z UART0 i z tunelu (link_in_*).
+static ssize_t tee_write(int fd, const void *data, size_t size)
+{
+    const char *p = (const char *) data;
+    size_t start = 0;
+    for (size_t i = 0; i < size; i++) {
+        if (p[i] == '\n') {                                  // na UART koniec linii jako CR LF
+            if (i > start) uart_write_bytes(UART_NUM_0, p + start, i - start);
+            uart_write_bytes(UART_NUM_0, "\r\n", 2);
+            start = i + 1;
+        }
+    }
+    if (size > start) uart_write_bytes(UART_NUM_0, p + start, size - start);
+    link_out_write(p, size);
+    return (ssize_t) size;
+}
+static int tee_open(const char *path, int flags, int mode) { return 0; }
+static int tee_close(int fd) { return 0; }
+static int tee_fstat(int fd, struct stat *st)
+{
+    memset(st, 0, sizeof(*st));
+    st->st_mode = S_IFCHR;
+    return 0;
+}
+
+static void uart_in_task(void *arg)
+{
+    uint8_t buf[256];
+    for (;;) {
+        int n = uart_read_bytes(UART_NUM_0, buf, sizeof(buf), pdMS_TO_TICKS(20));
+        if (n <= 0) continue;
+        while (link_in_space() < (size_t) n) vTaskDelay(1);     // konsola zajeta (np. zapis flash przy upload)
+        link_in_push(buf, (size_t) n, false);
     }
 }
 
@@ -434,7 +539,7 @@ static void console_task(void *arg)
     uint8_t ch;
     cmd_help();
     for (;;) {
-        if (uart_read_bytes(UART_NUM_0, &ch, 1, portMAX_DELAY) != 1) continue;
+        if (link_in_read(&ch, 1, portMAX_DELAY) != 1) continue;
         if (ch == '\r' || ch == '\n') {
             if (len > 0) {
                 line[len] = 0;
@@ -462,9 +567,29 @@ void console_init(void)
         // Bufor TX i wyjscie stdout przez sterownik: printf czeka wtedy na miejsce w buforze, oddajac procesor, zamiast
         // krecic sie w petli na FIFO. Bez tego dlugi wydruk (`frames`, `grid`, `glitch`) zatrzymywal zadanie liczace
         // ramki (nizszy priorytet) na ponad sekunde i tasma zamierala albo gasla.
-        ESP_ERROR_CHECK(uart_driver_install(UART_NUM_0, 8192, 4096, 0, NULL, 0));   // duzy bufor RX: upload
-        ESP_ERROR_CHECK(uart_param_config(UART_NUM_0, &cfg));
-        uart_vfs_dev_use_driver(UART_NUM_0);
+        // Wejscie jest od razu przekladane do wspolnego strumienia (uart_in_task), wiec bufor RX nie musi miescic calej
+        // porcji `upload`. Brak pamieci nie moze konczyc sie abortem: wtedy uklad wpadal w petle restartow bez konsoli.
+        esp_err_t ie = uart_driver_install(UART_NUM_0, 2048, 2048, 0, NULL, 0);
+        if (ie != ESP_OK) ie = uart_driver_install(UART_NUM_0, 512, 512, 0, NULL, 0);
+        if (ie != ESP_OK) {
+            ESP_LOGE(TAG, "sterownik UART0: %s (brak pamieci?) - konsola tylko przez Wi-Fi", esp_err_to_name(ie));
+        } else {
+            uart_param_config(UART_NUM_0, &cfg);
+            uart_vfs_dev_use_driver(UART_NUM_0);
+        }
+    }
+    static const esp_vfs_t tee = {
+        .flags = ESP_VFS_FLAG_DEFAULT,
+        .write = &tee_write,
+        .open = &tee_open,
+        .close = &tee_close,
+        .fstat = &tee_fstat,
+    };
+    if (uart_is_driver_installed(UART_NUM_0)) {
+        if (esp_vfs_register("/dev/tee", &tee, NULL) == ESP_OK && freopen("/dev/tee/0", "w", stdout) != NULL) {
+            setvbuf(stdout, NULL, _IOLBF, 256);
+        }
+        xTaskCreatePinnedToCore(uart_in_task, "uart_in", 2560, NULL, 7, NULL, 0);
     }
     xTaskCreatePinnedToCore(console_task, "console", 4096, NULL, 6, NULL, 0);   // powyzej zadania liczacego ramki
     ESP_LOGI(TAG, "konsola na UART0, wpisz help");
