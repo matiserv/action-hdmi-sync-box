@@ -2,6 +2,7 @@
 #include "pins.h"
 #include <stdio.h>
 #include <string.h>
+#include <stddef.h>
 #include <stdlib.h>
 #include "nvs_flash.h"
 #include "nvs.h"
@@ -72,6 +73,8 @@ void params_defaults(void)
         .sat_pct = 100,
         .mat = {1000, 0, 0, 0, 1000, 0, 0, 0, 1000},
         .lat_us10 = 41,
+        .hdr_conv = 1,
+        .hdr_white = 203,
         .grid_w = 48,
         .grid_h = 27,
     };
@@ -81,7 +84,12 @@ uint8_t g_grid_w = GRID_W_MAX, g_grid_h = GRID_H_MAX;
 
 // Klucz zapisu zawiera wersje ukladu struktury: po zmianie pol stary zapis jest pomijany (inaczej pola
 // o tym samym rozmiarze struktury wczytalyby sie przesuniete). Zwieksz przy kazdej zmianie params_t.
-#define PARAMS_KEY "p20"
+// "p21" = uklad "p20" + pola dopisane na koncu (hdr_conv, hdr_white). Zapis "p20" z wczesniejszego firmware jest
+// wczytywany jako poczatek struktury, a nowe pola zostaja domyslne - kalibracja przechodzi przez aktualizacje.
+// Stary klucz nie jest kasowany, wiec powrot do poprzedniego firmware tez znajdzie swoje parametry.
+#define PARAMS_KEY "p21"
+#define PARAMS_KEY_OLD "p20"
+#define PARAMS_OLD_SIZE offsetof(params_t, hdr_conv)
 
 void params_load(void)
 {
@@ -96,6 +104,12 @@ void params_load(void)
     if (nvs_get_blob(h, PARAMS_KEY, &tmp, &len) == ESP_OK && len == sizeof(params_t)) {
         g_params = tmp;
         ESP_LOGI(TAG, "parametry wczytane z NVS");
+    } else {
+        len = sizeof(params_t);
+        if (nvs_get_blob(h, PARAMS_KEY_OLD, &tmp, &len) == ESP_OK && len == PARAMS_OLD_SIZE) {
+            memcpy(&g_params, &tmp, PARAMS_OLD_SIZE);
+            ESP_LOGI(TAG, "parametry wczytane z NVS (zapis sprzed v14.5; nowe pola domyslne)");
+        }
     }
     nvs_close(h);
 }
@@ -175,6 +189,8 @@ static const entry_t table[] = {
     {"dig_prof_delay", &g_params.dig_prof_delay_us10, 'i'},
     {"hdr_mode", &g_params.hdr_mode, 'b'},
     {"hdr_gain", &g_params.hdr_gain_pct, 'i'},
+    {"hdr_conv", &g_params.hdr_conv, 'i'},
+    {"hdr_white", &g_params.hdr_white, 'i'},
     {"sat", &g_params.sat_pct, 'i'},
     {"m_rr", &g_params.mat[0], 'i'},
     {"m_rg", &g_params.mat[1], 'i'},

@@ -1,5 +1,25 @@
 #pragma once
 #include <stdint.h>
+// Stan, ktory przezywa restart programowy i restart po bledzie (pamiec RTC, bez zerowania przy starcie). Jest to JEDYNA
+// zmienna w tej pamieci i jej uklad nie moze sie zmieniac miedzy wersjami: osobne zmienne dostawaly od linkera rozne
+// adresy w roznych wersjach firmware i po aktualizacji nowa wersja czytala cudze dane (ochrona przed petla restartow
+// widziala "miliardy startow" i od razu wracala do starej partycji). Nowe pola dopisywac na koncu i zmieniac RTC_MAGIC.
+#define BOOT_HIST_N 6
+#define RTC_MAGIC 0x53425831u       // "SBX1"
+typedef struct {
+    uint32_t magic;                 // RTC_MAGIC, gdy reszta jest wazna
+    uint32_t boot_count;            // starty z rzedu bez 30 s spokojnej pracy (ochrona przed petla restartow)
+    uint32_t crumb;                 // znacznik miejsca: 0 = poza liczeniem ramki, 1 = srednie i rozmycie,
+                                    // 3 = wygladzanie i kolory (4 = z konwersja HDR), 5 = po kolorach
+    uint32_t hist[BOOT_HIST_N];     // historia startow, najnowszy pierwszy: wersja x10 << 24 | numer partycji OTA << 20 |
+                                    // przyczyna (esp_reset_reason) << 8 | znacznik miejsca sprzed restartu
+} rtc_state_t;
+extern rtc_state_t g_rtc;
+#define g_crumb (g_rtc.crumb)
+#define g_boot_hist (g_rtc.hist)
+extern uint32_t g_prev_crumb;      // znacznik miejsca sprzed restartu
+extern int      g_prev_reset;      // esp_reset_reason() tego startu
+#include <stdint.h>
 #include <stdbool.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -29,7 +49,8 @@ typedef struct {
     uint32_t d_isr_lines;       // linii probkujacych obslozonych
     float    isr_max_us;        // najdluzsze przerwanie probkujace
     uint32_t d_resync;          // (pauzy na zapis NVS)
-    bool     hdr_active;        // w ostatniej ramce stosowano nasycenie HDR
+    bool     hdr_active;        // w ostatniej ramce stosowano obrobke HDR
+    bool     hdr_pq;            // ... i byla to konwersja PQ + BT.2020 -> sRGB (nie sam mnoznik nasycenia)
     bool     dig_on;            // pracuje kontroler cyfrowy ADC (adc_mode 1 lub 2)
     bool     blk_on;            // tryb blokowy (adc_mode 2)
     uint32_t blk_ovf;           // tryb blokowy: bloki z przepelnionym FIFO (liczenie w przerwaniu nie nadazalo)

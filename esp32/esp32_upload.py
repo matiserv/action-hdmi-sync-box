@@ -123,6 +123,9 @@ if ok and tcp and not os.environ.get("SYNCBOX_UPLOAD_NO_CONFIRM"):   # zmienna t
     # Nowy firmware jest na probie: potwierdza sie sam, gdy po restarcie znow dziala lacze z modulem Wi-Fi, a ono dziala
     # tylko przy podlaczonym kliencie konsoli. Zostajemy wiec polaczeni (albo laczymy sie od nowa) i pytamy o wersje.
     confirmed = False
+    reverted = False
+    mt = re.search(r"OK (ota_\d)", txt)
+    target = mt.group(1) if mt else ""       # partycja, do ktorej trafil obraz
     t_end = time.time() + 100
     while time.time() < t_end and not confirmed:
         time.sleep(3)
@@ -137,11 +140,18 @@ if ok and tcp and not os.environ.get("SYNCBOX_UPLOAD_NO_CONFIRM"):   # zmienna t
             except OSError:
                 pass
             continue
-        m = re.search(r"syncbox ESP32 v[\d.]+, partycja \w+, proba (\d)", ans)
+        m = re.search(r"syncbox ESP32 v[\d.]+, partycja (\w+), proba (\d)", ans)
         if m:
             print(m.group(0))
-            confirmed = m.group(1) == "0"
-    print("nowy firmware potwierdzony" if confirmed else "UWAGA: brak potwierdzenia - ESP32 wroci do poprzedniej wersji po 120 s od startu")
-    ok = confirmed
+            if target and m.group(1) != target:
+                # ESP32 odpowiada, ale z drugiej partycji: nowy obraz sie nie utrzymal i wrocil poprzedni firmware
+                reverted = True
+                break
+            confirmed = m.group(2) == "0"
+    if reverted:
+        print(f"BLAD: nowy firmware ({target}) sie nie utrzymal - ESP32 dziala z poprzedniej partycji. Komenda `ver` pokazuje historie startow.")
+    else:
+        print("nowy firmware potwierdzony" if confirmed else "UWAGA: brak potwierdzenia - ESP32 wroci do poprzedniej wersji po 120 s od startu")
+    ok = confirmed and not reverted
 ser.close()
 sys.exit(0 if ok else 1)

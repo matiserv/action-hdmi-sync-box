@@ -39,7 +39,8 @@ static void cmd_help(void)
            "  params               - aktualne parametry\n"
            "  set <nazwa> <wartosc>- zmiana parametru (patrz params): black_mv, white_mv, hoff, hblank, vstart, vlines,\n"
            "                         cut, gain, gamma, flip_h, flip_v, rep, lat, sar_div, sar_cycle, vsync_neg, hsync_neg,\n"
-           "                         hdr_mode (0 auto, 1 SDR, 2 HDR), hdr_gain (%%), sat (%%), m_rr..m_bb (1/1000),\n"
+           "                         hdr_mode (0 auto, 1 SDR, 2 HDR), hdr_gain (%%), hdr_conv (1 = HDR10 -> sRGB), hdr_white (nity),\n"
+           "                         sat (%%), m_rr..m_bb (1/1000),\n"
            "                         adc_mode (0 RTC, 1 cyfrowy, 2 cyfrowy blokowy), dig_step, dig_block, dig_d (ns), dig_phases,\n"
            "                         grid_w (do 48), grid_h (do 27), blur (0..12), blur_dir (1 = wzdluz krawedzi), blur_in (%%), lbox (1 = wykrywanie czarnych pasow), lbox_thr, hold (0,1 poziomu), smooth (%%, 100 = bez), smooth_t1, smooth_tc, smooth_t2, smooth_nz (0,1 x szum komorki; 0 = bez); od razu\n"
            "  regs | hardreset     - rejestry ADC/I2S i czasy filtrow / pelny reset ukladu (takze czesci RTC)\n"
@@ -100,9 +101,10 @@ static void cmd_stat(void)
     {
         hdmi_status_t h;
         hdmi_get_status(&h);
-        printf("HDR: %s (UART2: %s; hdr_mode=%u), nasycenie x%.2f\n", s.hdr_active ? "aktywny" : "nieaktywny",
+        printf("HDR: %s (UART2: %s; hdr_mode=%u), nasycenie x%.2f\n",
+               !s.hdr_active ? "nieaktywny" : (s.hdr_pq ? "aktywny, konwersja PQ -> sRGB" : "aktywny, mnoznik nasycenia"),
                hdmi_hdr_name(h.hdr_mode), g_params.hdr_mode,
-               (s.hdr_active ? g_params.hdr_gain_pct : g_params.sat_pct) / 100.0f);
+               ((s.hdr_active && !s.hdr_pq) ? g_params.hdr_gain_pct : g_params.sat_pct) / 100.0f);
         printf("UART2: %lu bajtow (w tym %lu zer), napisow HDR: %lu\n", (unsigned long)h.rx_bytes,
                (unsigned long)h.rx_zero, (unsigned long)h.tokens);
     }
@@ -452,6 +454,23 @@ static void handle_line(char *line)
                LINK_FW_VERSION / 10, LINK_FW_VERSION % 10, run ? run->label : "?", (unsigned) link_trial_state(),
                (unsigned long) esp_get_free_heap_size(), (unsigned long) esp_get_minimum_free_heap_size(),
                (unsigned long) heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT));
+        {
+            // przyczyna tego startu (esp_reset_reason) i miejsce, w ktorym program byl przed restartem (g_crumb)
+            static const char *const RS[] = {"nieznana", "wlaczenie zasilania", "reset zewnetrzny", "restart programowy",
+                                             "blad programu (panic)", "watchdog przerwan", "watchdog zadan", "watchdog",
+                                             "wyjscie z uspienia", "spadek napiecia", "SDIO"};
+            const int r = g_prev_reset;
+            printf("poprzedni restart: %s (%d), znacznik miejsca %lu\n", r >= 0 && r <= 10 ? RS[r] : "inna", r,
+                   (unsigned long) g_prev_crumb);
+            printf("historia startow (najnowszy pierwszy; wersja/partycja/przyczyna/znacznik):");
+            for (int i = 0; i < BOOT_HIST_N; i++) {
+                const uint32_t e = g_boot_hist[i];
+                if (e == 0) break;
+                printf(" v%lu.%lu/ota_%lu/%lu/%lu", (unsigned long) ((e >> 24) / 10), (unsigned long) ((e >> 24) % 10),
+                       (unsigned long) ((e >> 20) & 0xF), (unsigned long) ((e >> 8) & 0xFF), (unsigned long) (e & 0xFF));
+            }
+            putchar('\n');
+        }
     } else if (!strcmp(cmd, "link")) {
         char *v = strtok(NULL, " \t");
         if (v && !strcmp(v, "dly")) {

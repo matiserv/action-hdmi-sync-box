@@ -32,6 +32,7 @@ angielski odpowiednik.
 - [Krok 4 — pierwsze uruchomienie i testy](#krok-4--pierwsze-uruchomienie-i-testy)
 - [Bez kabla: stan, konsola i aktualizacje przez Wi-Fi](#bez-kabla-stan-konsola-i-aktualizacje-przez-wi-fi)
 - [Zaniki obrazu HDMI](#zaniki-obrazu-hdmi)
+- [HDR](#hdr)
 - [Kalibracja](#kalibracja)
 - [Inne lampy w pokoju (satelity)](#inne-lampy-w-pokoju-satelity)
 - [Czy zadziała na 1. generacji?](#czy-zadziała-na-1-generacji)
@@ -71,7 +72,7 @@ Taśma ma 84 diody w 28 adresowalnych sekcjach, kolejność kolorów BRG.
 | [`esphome/components/syncbox/`](esphome/components/syncbox/) | komponent zewnętrzny (sterownik taśmy, odbiornik SPI, mapowanie, kalibracja, satelity) i jego notatki |
 | [`esphome/diagnostics/`](esphome/diagnostics/) | małe konfiguracje, którymi szukane były piny taśmy; przydatne przy przenoszeniu na inną wersję płytki |
 | [`esp32/`](esp32/) | źródła firmware ESP32 (ESP-IDF 5.3.1 przez PlatformIO) i notatki z rozwoju |
-| [`firmware/esp32/`](firmware/esp32/) | gotowy firmware ESP32 v14.4: aplikacja i pełny obraz, z sumami SHA-256 |
+| [`firmware/esp32/`](firmware/esp32/) | gotowy firmware ESP32 v14.5: aplikacja i pełny obraz, z sumami SHA-256 |
 | [`tools/bench/`](tools/bench/) | strona testowa i skrypty pomiarowe do kalibracji i testów regresji |
 | [`tools/uf2_to_obk.py`](tools/uf2_to_obk.py) | zamienia UF2 z ESPHome na surowy obraz dla flashera OpenBeken |
 | [`docs/`](docs/) | zdjęcia, wzorcowe wartości kalibracji, notatki o torze wideo |
@@ -159,7 +160,7 @@ i po sieci; P0 (UART2) należy do taśmy, więc nie przenoś tam loggera.
 Wejdź w tryb programowania (przytrzymaj `5S1`, wyłącz i włącz zasilanie, puść) i wgraj pełny obraz od adresu 0:
 
 ```bash
-esptool --chip esp32 -p COM4 -b 460800 write-flash 0x0 firmware/esp32/syncbox_esp32_v14.4_full_0x0.bin
+esptool --chip esp32 -p COM4 -b 460800 write-flash 0x0 firmware/esp32/syncbox_esp32_v14.5_full_0x0.bin
 ```
 
 Nadaje się każdy flasher oparty na esptool; we flasherze w przeglądarce ustaw offset `0x0`:
@@ -174,7 +175,7 @@ konsolę na tym samym złączu (115200 8N1). Komenda
 `upload` przyjmuje nową aplikację przez konsolę, zapisuje ją do nieaktywnej partycji OTA i restartuje układ:
 
 ```bash
-python esp32/esp32_upload.py COM4 firmware/esp32/syncbox_esp32_v14.4_app_0x20000.bin
+python esp32/esp32_upload.py COM4 firmware/esp32/syncbox_esp32_v14.5_app_0x20000.bin
 ```
 
 **Kompilacja ze źródeł:**
@@ -227,12 +228,13 @@ układami niesie więcej niż obraz:
 - **Aktualizacja firmware ESP32 przez Wi-Fi:**
 
   ```bash
-  python esp32/esp32_upload.py tcp://192.168.1.50:2323 firmware/esp32/syncbox_esp32_v14.4_app_0x20000.bin
+  python esp32/esp32_upload.py tcp://192.168.1.50:2323 firmware/esp32/syncbox_esp32_v14.5_app_0x20000.bin
   ```
 
   Wgrany firmware startuje na próbę. Zostaje tylko wtedy, gdy po restarcie działa łącze z modułem Wi-Fi; inaczej
   ESP32 po 120 s sam wraca do poprzedniej wersji. Skrypt zostaje połączony i wypisuje potwierdzenie. Firmware, który
-  cztery razy z rzędu wysypie się przy starcie, też jest cofany.
+  cztery razy z rzędu zrestartuje się bez 30 s normalnej pracy, też jest cofany. `ver` wypisuje przyczynę
+  ostatniego startu i historię sześciu startów, więc nieudaną aktualizację da się potem wyjaśnić.
 
 Ustaw hasło konsoli. Bez niego każdy w sieci lokalnej może sterować ESP32 i wgrać mu firmware.
 
@@ -252,6 +254,35 @@ brak jakiejkolwiek zmiany po stronie wejścia. Na egzemplarzu wzorcowym 5-metrow
 dawał przy 4K60 HDR zanik średnio co 9 minut; z krótkim kablem nie było żadnego w 40 minut. Ten sam 5-metrowy kabel
 wpięty wprost do TV działał, więc po obu stronach boxa trzymaj krótkie kable.
 
+## HDR
+
+Przy źródle HDR10 lub HDR10+ tor analogowy oddaje wartości sygnału takie, jakie są: zakodowane krzywą PQ
+(SMPTE ST 2084), w barwach BT.2020. Odczytane jak zwykły obraz dają płaskie, przesunięte kolory — czerwień wpada
+w pomarańcz, zieleń w żółć, ciepłe tony w żółtozielony. Od v14.5 ESP32 je przelicza: PQ → światło liniowe →
+BT.2020 na BT.709 → sRGB, przy czym `hdr_white` nitów (domyślnie 203) daje pełne wysterowanie. Jaśniejsze kolory są
+ściemniane w całości, więc odcień zostaje.
+
+Zmierzone na egzemplarzu wzorcowym skryptem `tools/bench/hdrtest.py` (4K60 HDR10 z komputera, wyjście RGB; 16 kolorów
+sRGB wyświetlonych w HDR z bielą 203 nity):
+
+| | sam mnożnik nasycenia (do v14.4) | konwersja (v14.5) |
+|---|---|---|
+| średni błąd barwy | 13,2° | 1,2° |
+| największy błąd barwy | 32° (zieleń) | 3° |
+| biały 255 255 255 odczytany jako | 148 149 149 | 249 251 251 |
+| ciemny szary 64 odczytany jako | 77 | 64–65 |
+
+- `set hdr_conv 0` wraca do starej metody. `set hdr_white <nity>` przesuwa jasność obrazu, przy której taśma dochodzi
+  do pełnej mocy (mniejsza wartość rozjaśnia taśmę). `save` zapisuje ustawienie.
+- HLG i Dolby Vision zostają przy mnożniku nasycenia (`hdr_gain`).
+- Pomiar dotyczy wyjścia RGB z komputera. Odtwarzacze nadające YCbCr przechodzą jeszcze przez konwersję barw
+  w układzie HDMI boxa, której nie mierzono.
+
+Tester działa pod Windows: `python tools/bench/hdrtest.py tcp://<adres-boxa>:2323 <numer wyświetlacza>`. Otwiera
+własne pełnoekranowe okno HDR10 na wyświetlaczu podłączonym przez box (HDR musi być dla niego włączony w Windows),
+pokazuje pola o dokładnych wartościach sygnału i porównuje je z odczytem ESP32.
+`python tools/bench/hdrtest.py info` wypisuje wyświetlacze.
+
 ## Kalibracja
 
 Obraz dociera do ESP32 jako napięcia analogowe, więc poziomy i czasy są cechą płytki. Wartości domyślne wpisane
@@ -269,7 +300,7 @@ wygląda źle.
 | Czarne pasy | `lbox` 1, `lbox_thr` 12 | `tools/bench/letterbox.py` |
 | Rozmiar pola i rozmycie | `grid_w` 48, `grid_h` 27, `blur` 5, `blur_in` 80 | |
 | Filtr czasowy | `smooth` 4, `smooth_t1` 10, `smooth_tc` 25, `smooth_t2` 32, `smooth_nz` 30, `hold` 10 | `tools/bench/stability.py`, `latency.py`, `edgedetail.py` |
-| HDR | `hdr_mode` 0 (auto), `hdr_gain` 200 | `hdmi` pokazuje rozpoznany tryb |
+| HDR | `hdr_mode` 0 (auto), `hdr_conv` 1, `hdr_white` 203; `hdr_gain` 200 dla HLG / Dolby Vision | `tools/bench/hdrtest.py`; `hdmi` pokazuje rozpoznany tryb |
 
 Na koniec `save`. `defaults` przywraca wartości wpisane w firmware (bez zapisu). Co robi każdy parametr filtra,
 razem z pomiarami, opisuje [`esp32/README.md`](esp32/README.md).
@@ -332,15 +363,16 @@ Jeśli spróbujesz, daj znać, co wyszło.
 
 ## Znane ograniczenia
 
-- Sprawdzone na jednym egzemplarzu, ze źródłami 1080p60 i 4K60 SDR. HDR jest rozpoznawany i kompensowany stałym
-  wzmocnieniem nasycenia; nie był kalibrowany.
+- Sprawdzone na jednym egzemplarzu, ze źródłami 1080p60 i 4K60. Konwersja HDR10 była mierzona tylko z wyjściem RGB
+  z komputera; źródeł HDR nadających YCbCr, HLG i Dolby Vision nie mierzono.
 - Obraz jest próbkowany z analogowego sygnału 1080p, ok. 14 000 próbek na klatkę, więc bardzo drobne, kontrastowe
   detale przy krawędzi z natury szumią; filtr czasowy to ukrywa kosztem wolniejszej reakcji pojedynczych komórek.
 - Satelity kosztują BK7238 ramki obrazu: ok. 2 % pakietów zbiega się z odrzuconą ramką (2–3 ramki na sekundę
   przy 2 × 60 pakietów/s). Przyczyna nie jest ustalona.
 - Nie ma trybu muzycznego z mikrofonu.
-- Nie sprawdzone: powrót ESP32 do poprzedniej wersji przy pętli restartów (przećwiczony był tylko powrót po
-  niepotwierdzonym wgraniu przez Wi-Fi).
+- Jedno wgranie przez Wi-Fi skończyło się restartem nowego firmware przed potwierdzeniem i powrotem poprzedniej
+  wersji; przyczyny nie ustalono (z tego powodu `ver` pokazuje teraz historię startów). Ten sam obraz wgrany
+  ponownie wstał normalnie.
 - Opóźnienie całego toru jest oszacowane z części składowych (ok. 14 ms od końca klatki do taśmy), a nie
   zmierzone od ekranu do diody.
 

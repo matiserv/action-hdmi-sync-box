@@ -10,7 +10,7 @@
 //   6..7   szerokosc wejscia, 8..9 wysokosc (mlodszy bajt pierwszy), 10 odswiezanie Hz, 11 'P' / 'I'
 //   12..13 licznik zanikow VSync, 14..15 licznik zmian formatu wejscia
 //   16..19 czas od startu w sekundach
-//   20     wersja firmware x 10 (144 = v14.4)
+//   20     wersja firmware x 10 (145 = v14.5)
 //   21     numer porcji tunelu w gore, 22 numer ostatniej przyjetej porcji w dol, 23 rezerwa
 //   24..25 dlugosc porcji w gore, 26.. dane (do LINK_UP_PAY bajtow)
 //   ostatnie 2 bajty: CRC16 (CCITT, 0xFFFF) z calej reszty bloku, starszy bajt pierwszy
@@ -27,7 +27,7 @@
 #include "freertos/FreeRTOS.h"
 #include "pins.h"
 
-#define LINK_FW_VERSION 144                      // v14.4
+#define LINK_FW_VERSION 145                      // v14.5
 #define LINK_UP_HDR     26
 #define LINK_UP_PAY     (AUX_BYTES - LINK_UP_HDR - 2)
 #define LINK_DN_MAX     1024

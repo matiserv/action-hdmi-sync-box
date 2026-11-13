@@ -63,6 +63,9 @@ typedef struct {
     int32_t  sat_pct;       // mnoznik nasycenia w SDR, w % (100 = bez zmian)
     int32_t  mat[9];        // macierz kolorow 3x3 w 1/1000: wyjscie R = (m0*R + m1*G + m2*B)/1000 itd.
     int32_t  lat_us10;      // zbocze HSync -> wejscie w przerwanie + start konwersji -> chwila probkowania; zmierzone 5,6 us (hprof)
+    // --- pola dodane w v14.5 (uklad "p21"); wszystko powyzej to uklad "p20" i musi zostac bez zmian ---
+    int32_t  hdr_conv;      // 1 = przy HDR10/HDR10+ konwersja PQ + BT.2020 -> sRGB; 0 = sam mnoznik nasycenia (hdr_gain)
+    int32_t  hdr_white;     // luminancja obrazu HDR w nitach, ktora daje pelne wysterowanie (203 = biel odniesienia BT.2408)
 } params_t;
 
 extern params_t g_params;

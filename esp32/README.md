@@ -444,3 +444,84 @@ Wyniki (BK v17, ESP32 v14.4, 4K60 HDR10 z przystawki):
 
 Nie sprawdzone: ochrona przed pętlą restartów (tylko skompilowana). Czujnik „Sygnał HDMI” po zmianie w BK v17
 przy braku sygnału na wejściu przez 14 min pokazywał „brak” bez żadnego przeskoku.
+
+## v14.5 (2026-11-13): konwersja HDR10, diagnostyka restartów
+
+### Pomiar toru HDR
+
+`bench/hdrtest.py` (Windows) otwiera na wyświetlaczu podłączonym przez box własne okno HDR10 i wpisuje do niego
+dokładne 10-bitowe wartości sygnału (`bench/hdrwin.py`: łańcuch wymiany DXGI R10G10B10A2 w przestrzeni
+ST 2084 / BT.2020, bez przeglądarki i odtwarzacza), a z ESP32 czyta komendą `trace`, co z nich zostało.
+
+    python bench/hdrtest.py info                                   lista wyświetlaczy
+    python bench/hdrtest.py tcp://192.168.1.50:2323 3 raw prim colors bright
+
+Wynik z komputera (4K60 HDR10, wyjście RGB 8 bitów):
+
+- Tor analogowy jest liniowy względem kodu sygnału: odczyt = kod / 1023 × 255, odstępstwo najwyżej 3 poziomy,
+  nasycenie dopiero przy kodzie 1016–1023. Szarości są neutralne (kanały rozjechane średnio o 0,4, najwyżej 2,5).
+- Przesłuch między kanałami: przy jednym kanale na kodzie 640 pozostałe pokazują do 7 poziomów, przy 896 do 18.
+- Czyli w trybie HDR do ESP32 docierają wartości PQ w barwach BT.2020. Dotychczasowa obróbka (mnożnik nasycenia
+  ×2 w HSV, jak w fabrycznym firmware) traktowała je jak zwykły obraz: czerwień wychodziła o 19° w stronę
+  pomarańczu, zieleń o 32° w stronę żółci, ciepłe tony o 8–10° w stronę żółtozielonego, biel 203 nity jako 148/255.
+
+### Konwersja
+
+Przy HDR10 i HDR10+ (oraz przy `hdr_mode 2`) każda komórka jest przeliczana: PQ → nity (tablica 256 pozycji),
+macierz BT.2020 → BT.709 na świetle liniowym, skala tak, żeby `hdr_white` nitów dało 1, kodowanie sRGB (tablica
+4096 pozycji). Kolory jaśniejsze od `hdr_white` są ściemniane wspólnym czynnikiem, więc odcień zostaje; składowa
+ujemna (barwa spoza BT.709) jest obcinana do zera. Tablice są stałe i leżą we flashu (`main/hdr_tables.h`,
+generowane przez `gen_hdr_tables.py`), więc nie zajmują RAM. Dalej jak w SDR: macierz użytkownika, nasycenie
+`sat`, wzmocnienie, gamma, próg `cut`.
+
+- `hdr_conv` (domyślnie 1): 0 wraca do samego mnożnika nasycenia `hdr_gain`.
+- `hdr_white` (domyślnie 203): luminancja obrazu w nitach, która daje pełne wysterowanie. Mniejsza wartość
+  rozjaśnia taśmę.
+- HLG i Dolby Vision mają inne kodowanie i zostają przy `hdr_gain`.
+- `stat` pokazuje „HDR: aktywny, konwersja PQ -> sRGB” albo „aktywny, mnoznik nasycenia”.
+
+| 16 kolorów sRGB wyświetlonych w HDR, biel 203 nity | mnożnik nasycenia (v14.4) | konwersja (v14.5) |
+|---|---|---|
+| błąd barwy średni / największy | 13,2° / 32,1° | 1,2° / 3,0° |
+| biały 255 255 255 | 148 149 149 | 249 251 251 |
+| szary 64 | 77 77 77 | 65 64 65 |
+| czerwony 255 0 0 | 136 44 0 | 255 2 2 |
+| zielony 0 255 0 | 92 146 30 | 14 255 1 |
+| skóra 224 172 105 | 135 116 73 | 226 169 107 |
+| szarość 100 / 203 / 400 nitów | 129 / 148 / 167 | 189 / 250 / 254 |
+
+Pomiar dotyczy wyjścia RGB z komputera. Odtwarzacze nadające YCbCr przechodzą jeszcze przez konwersję barw w układzie
+HDMI boxa, której ten pomiar nie obejmuje.
+
+### Parametry
+
+Nowe pola są dopisane na końcu `params_t`, a zapis w NVS ma nowy klucz `p21`. Zapis `p20` z wcześniejszego firmware
+jest wczytywany jako początek struktury (kalibracja przechodzi przez aktualizację; sprawdzone: 65 parametrów bez
+zmian) i nie jest kasowany, więc powrót do starszej wersji też znajduje swoje parametry.
+
+### Restarty: błąd w ochronie przed pętlą i historia startów
+
+Ochrona przed pętlą restartów trzymała licznik i znacznik w osobnych zmiennych `RTC_NOINIT`. Ich adresy zależały od
+tego, jakie inne zmienne tego typu miała dana wersja, więc po aktualizacji nowa wersja czytała „licznik startów”
+z miejsca, gdzie poprzednia trzymała znacznik, widziała ponad cztery starty i od razu wracała do starej partycji
+(dwa wgrania z rzędu). Teraz cały stan jest w jednej strukturze o stałym układzie (`rtc_state_t g_rtc`: znacznik,
+licznik, miejsce w programie, historia), licznik powyżej 8 jest traktowany jak śmieci, a obcy układ pamięci
+(inna wersja) zeruje stan.
+
+`ver` pokazuje przyczynę ostatniego startu i historię sześciu startów: wersja / partycja / przyczyna
+(`esp_reset_reason`) / miejsce, w którym program był przed restartem (0 poza liczeniem ramki, 1 średnie i rozmycie,
+3 wygładzanie i kolory, 4 to samo z konwersją HDR, 5 po kolorach). Historia przeżywa restart po błędzie i powrót do
+drugiej partycji, więc widać po fakcie, dlaczego firmware na próbie się nie utrzymał.
+
+`esp32_upload.py` potwierdza wgranie tylko wtedy, gdy ESP32 odpowiada z partycji, do której trafił obraz; wcześniej
+zgłaszał „potwierdzony”, gdy odpowiedział poprzedni firmware po powrocie.
+
+| Test (wszystko przez Wi-Fi, bez adaptera) | Wynik |
+|---|---|
+| Wgranie v14.5 dwa razy z rzędu (obie partycje) | oba potwierdzone, historia: same restarty programowe |
+| Cztery restarty w odstępach ok. 9 s | przy czwartym starcie bez 30 s pracy przełączenie na drugą partycję — ochrona przed pętlą działa |
+| Parametry po aktualizacji z v14.4 | identyczne, plus `hdr_conv` i `hdr_white` |
+
+Nie wyjaśnione: pierwsze wgranie v14.5 (jeszcze ze starego v14.4) skończyło się restartem nowego obrazu przed
+potwierdzeniem i powrotem do v14.4. Ten sam obraz wgrany później wstał bez problemu. Wtedy nie było jeszcze historii
+startów; przy powtórce `ver` pokaże przyczynę.

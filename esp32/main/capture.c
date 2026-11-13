@@ -25,6 +25,7 @@
 #include "sync.h"
 #include "spi_out.h"
 #include "hdmi.h"
+#include "hdr_tables.h"
 #include <string.h>
 #include <math.h>
 #include "esp_adc/adc_oneshot.h"
@@ -688,11 +689,52 @@ static bool hdr_active(void)
     return m != HDR_SDR && m != HDR_UNKNOWN;
 }
 
-// Jedna komorka: macierz kolorow, potem nasycenie w HSV (barwa i jasnosc bez zmian), jak funkcja
+// Konwersja PQ dotyczy sygnalow HDR10 i HDR10+ (oba uzywaja krzywej ST 2084) oraz wymuszenia hdr_mode = 2.
+// HLG i Dolby Vision maja inne kodowanie: zostaja przy mnozniku nasycenia.
+RTC_NOINIT_ATTR rtc_state_t g_rtc;
+uint32_t g_prev_crumb;
+int g_prev_reset;
+
+static bool hdr_pq_active(void)
+{
+    if (!g_params.hdr_conv || !hdr_active()) return false;
+    if (g_params.hdr_mode == 2) return true;
+    const uint8_t m = g_hdr_mode;
+    return m == HDR_HDR10 || m == HDR_HDR10P;
+}
+
+// HDR10 -> sRGB dla jednej komorki. Zmierzone testerem (bench/hdrtest.py): odczyt toru analogowego jest liniowy
+// wzgledem kodu sygnalu, czyli c[] to wartosci PQ (ST 2084) w barwach BT.2020. Kolejno: PQ -> nity, macierz
+// BT.2020 -> BT.709 na swietle liniowym, skala tak, zeby `hdr_white` nitow dalo 1, kodowanie sRGB.
+// Kolory jasniejsze od `hdr_white` sa sciemniane wspolnym czynnikiem (odcien zostaje), a barwy spoza BT.709
+// obcinane do zera na skladowej ujemnej. Tablice sa stale (flash), bez funkcji potegowych w petli.
+static inline void hdr_pq_to_srgb(int32_t *c, float inv_white)
+{
+    const float r = HDR_PQ_NITS[c[0]], g = HDR_PQ_NITS[c[1]], b = HDR_PQ_NITS[c[2]];
+    float v[3] = {
+        ( 1.660491f * r - 0.587641f * g - 0.072850f * b) * inv_white,
+        (-0.124550f * r + 1.132900f * g - 0.008349f * b) * inv_white,
+        (-0.018151f * r - 0.100579f * g + 1.118730f * b) * inv_white,
+    };
+    float mx = 0;
+    for (int i = 0; i < 3; i++) {
+        if (v[i] < 0) v[i] = 0;
+        if (v[i] > mx) mx = v[i];
+    }
+    const float k = mx > 1.0f ? 4095.0f / mx : 4095.0f;
+    for (int i = 0; i < 3; i++) {
+        uint32_t idx = (uint32_t) (v[i] * k + 0.5f);
+        c[i] = HDR_ENC[idx > 4095 ? 4095 : idx];
+    }
+}
+
+// Jedna komorka: (HDR10: konwersja do sRGB,) macierz kolorow, potem nasycenie w HSV (barwa i jasnosc bez zmian), jak funkcja
 // 0x400d6458 fabrycznego firmware: S' = min(1, S * mnoznik).
-static inline void color_cell(const uint8_t *lin, uint8_t *out, const int32_t *m, bool identity, int32_t sat_pct)
+static inline void color_cell(const uint8_t *lin, uint8_t *out, const int32_t *m, bool identity, int32_t sat_pct, bool pq,
+                              float inv_white)
 {
     int32_t c[3] = {lin[0], lin[1], lin[2]};
+    if (pq) hdr_pq_to_srgb(c, inv_white);
     if (!identity) {
         const int32_t r = c[0], g = c[1], b = c[2];
         for (int i = 0; i < 3; i++) {
@@ -1341,6 +1383,7 @@ static void __attribute__((optimize("O3"))) blur_field(void)
 static void __attribute__((optimize("O2"))) finalize_frame(int bank)
 {
     const int64_t tf0 = esp_timer_get_time();
+    g_crumb = 1;
     lbox_update();
     uint32_t empty = 0, samples = 0;
     uint32_t sum[3] = {0, 0, 0}, mn[3] = {4095, 4095, 4095}, mx[3] = {0, 0, 0};
@@ -1349,8 +1392,13 @@ static void __attribute__((optimize("O2"))) finalize_frame(int bank)
     const bool identity = m[0] == 1000 && m[4] == 1000 && m[8] == 1000 && m[1] == 0 && m[2] == 0 && m[3] == 0 &&
                           m[5] == 0 && m[6] == 0 && m[7] == 0;
     const bool hdr = hdr_active();
-    const int32_t sat_pct = hdr ? g_params.hdr_gain_pct : g_params.sat_pct;
+    // po konwersji PQ obraz jest juz jak SDR: obowiazuje nasycenie `sat`, a nie mnoznik HDR
+    const bool pq = hdr && hdr_pq_active();
+    const int32_t sat_pct = (hdr && !pq) ? g_params.hdr_gain_pct : g_params.sat_pct;
+    const int32_t hw = g_params.hdr_white < 20 ? 20 : (g_params.hdr_white > 10000 ? 10000 : g_params.hdr_white);
+    const float inv_white = pq ? 1.0f / (float) hw : 0.0f;
     s_stats.hdr_active = hdr;
+    s_stats.hdr_pq = pq;
     const int32_t a_min = g_params.smooth_pct >= 100 || g_params.smooth_pct <= 0 ? 256 : g_params.smooth_pct * 256 / 100;
     const int32_t t1 = (g_params.smooth_t1 < 0 ? 0 : g_params.smooth_t1) << 8;
     const int32_t db = (g_params.hold_x10 < 0 ? 0 : g_params.hold_x10) * 256 / 10;
@@ -1374,6 +1422,7 @@ static void __attribute__((optimize("O2"))) finalize_frame(int bank)
     const int64_t tf1 = esp_timer_get_time();
     blur_field();
     const int64_t tf2 = esp_timer_get_time();
+    g_crumb = pq ? 4 : 3;
     // Zgodnosc zmian w blokach 8 x 8 komorek. Szum probkowania jest w kazdej komorce inny i w sredniej z bloku sie znosi,
     // a prawdziwa zmiana obrazu (sciemnienie, przejscie, ruch) przesuwa caly blok w te sama strone. Gdy srednia
     // roznica "szybka srednia - wyjscie" w bloku przekracza smooth_tc, komorki bloku nadazaja z pelna predkoscia,
@@ -1515,10 +1564,11 @@ static void __attribute__((optimize("O2"))) finalize_frame(int bank)
                     for (int c = 0; c < 3; c++) h[c] = (uint8_t) (((int32_t) s_sm[y][x][c] + 128) >> 8);
                 }
             }
-            color_cell(h, dst, m, identity, sat_pct);
+            color_cell(h, dst, m, identity, sat_pct, pq, inv_white);
         }
     }
     {
+        g_crumb = 5;
         const int64_t tf3 = esp_timer_get_time();
         s_fin_us[0] = (uint32_t) (tf1 - tf0); s_fin_us[1] = (uint32_t) (tf2 - tf1); s_fin_us[2] = (uint32_t) (tf3 - tf2);
     }
@@ -1609,6 +1659,7 @@ static void capture_task(void *arg)
         }
         maybe_rebuild_plan();
         finalize_frame(s_bank ^ 1);        // bank, do ktorego przerwanie juz nie pisze (s_fin_busy blokuje zamiane)
+        g_crumb = 0;
         s_fin_busy = false;
     }
 }

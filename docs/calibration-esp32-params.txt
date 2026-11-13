@@ -1,5 +1,5 @@
 # ESP32 console `params` output on the reference unit (PCB A4E32MGS02KR_V5, MX9291 video converter),
-# firmware v14.2 (unchanged in v14.4). These are also the compiled-in defaults (esp32/main/params.c).
+# firmware v14.2 (unchanged since). v14.5 adds hdr_conv = 1 and hdr_white = 203. These are also the compiled-in defaults (esp32/main/params.c).
 # Wynik komendy `params` na egzemplarzu wzorcowym; to zarazem wartosci domyslne w firmware.
 
   spi_hz             = 8000000

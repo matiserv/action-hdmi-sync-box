@@ -2,6 +2,7 @@
 // Zadanie: z analogowego RGB + HSync/VSync z toru wideo zbudowac pole kolorow (do 48x27) i wysylac je
 // po SPI do modulu BK7238 (ESPHome, komponent syncbox) z tempem klatek zrodla (do 60 Hz).
 #include <stdio.h>
+#include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/gpio.h"
@@ -59,23 +60,34 @@ static void stats_task(void *arg)
     }
 }
 
+// Stan w pamieci RTC (g_rtc): wazny tylko ze znacznikiem RTC_MAGIC i sensownym licznikiem. Po wlaczeniu zasilania,
+// po firmware sprzed v14.5 (inne zmienne pod tymi adresami) albo przy smieciach - zaczynamy od zera.
+static void rtc_state_boot(void)
+{
+    g_prev_reset = (int) esp_reset_reason();
+    if (g_prev_reset == ESP_RST_POWERON || g_rtc.magic != RTC_MAGIC || g_rtc.boot_count > 8) {
+        memset(&g_rtc, 0, sizeof(g_rtc));
+        g_rtc.magic = RTC_MAGIC;
+    }
+    g_prev_crumb = g_rtc.crumb;
+    g_rtc.crumb = 0;
+    const esp_partition_t *run = esp_ota_get_running_partition();
+    const uint32_t slot = run != NULL && run->label[0] == 'o' ? (uint32_t) (run->label[4] - '0') & 0xFu : 0xFu;
+    for (int i = BOOT_HIST_N - 1; i > 0; i--) g_rtc.hist[i] = g_rtc.hist[i - 1];
+    g_rtc.hist[0] = ((uint32_t) LINK_FW_VERSION << 24) | (slot << 20) | (((uint32_t) g_prev_reset & 0xFFu) << 8) |
+                    (g_prev_crumb & 0xFFu);
+}
+
 // Ochrona przed petla restartow: licznik w pamieci RTC (przetrwa restart programowy i panic, nie przetrwa wylaczenia
 // zasilania). Czwarty start z rzedu bez 30 s spokojnej pracy = ten obraz nie nadaje sie do uzytku, wraca druga partycja
 // OTA (poprzedni firmware). Bez tego bledny obraz wgrany przez konsole albo Wi-Fi wymagal przycisku i esptool.
-static RTC_NOINIT_ATTR uint32_t s_boot_magic;
-static RTC_NOINIT_ATTR uint32_t s_boot_count;
-
-static void boot_ok_cb(void *arg) { s_boot_count = 0; }
+static void boot_ok_cb(void *arg) { g_rtc.boot_count = 0; }
 
 static void boot_loop_guard(void)
 {
-    if (esp_reset_reason() == ESP_RST_POWERON || s_boot_magic != 0xB007C0DEu) {
-        s_boot_magic = 0xB007C0DEu;
-        s_boot_count = 0;
-    }
-    s_boot_count++;
-    if (s_boot_count >= 4) {
-        s_boot_count = 0;
+    g_rtc.boot_count++;
+    if (g_rtc.boot_count >= 4) {
+        g_rtc.boot_count = 0;
         const esp_partition_t *other = esp_ota_get_next_update_partition(NULL);
         if (other != NULL && esp_ota_set_boot_partition(other) == ESP_OK) {      // sprawdza tez poprawnosc obrazu
             esp_rom_printf("petla restartow: powrot do partycji %s\n", other->label);
@@ -89,6 +101,7 @@ static void boot_loop_guard(void)
 
 void app_main(void)
 {
+    rtc_state_boot();
     boot_loop_guard();
     esp_err_t e = nvs_flash_init();
     if (e == ESP_ERR_NVS_NO_FREE_PAGES || e == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -100,7 +113,7 @@ void app_main(void)
     link_trial_boot();                        // firmware wgrany przez Wi-Fi: na probe albo powrot do poprzedniego
     {
         const esp_partition_t *run = esp_ota_get_running_partition();
-        ESP_LOGI(TAG, "syncbox ESP32 v14.4 start, partycja %s", run ? run->label : "?");
+        ESP_LOGI(TAG, "syncbox ESP32 v14.5 start, partycja %s", run ? run->label : "?");
     }
 
     esp_register_freertos_idle_hook_for_cpu(core1_no_sleep_hook, 1);
