@@ -44,7 +44,8 @@ external_components:
 logger:
   level: DEBUG
   hardware_uart: UART1    # TX1 = P11 jak w fabrycznym firmware; P0 nalezy do tasmy
-  baud_rate: 115200
+  baud_rate: 0            # bez wyjscia szeregowego: przy 115200 kazda linia logu wstrzymuje petle (linia statystyk 16-22 ms,
+                          # dluzej niz klatka). Log idzie przez Wi-Fi. Do pracy z adapterem UART wpisz na ten czas 115200.
 
 wifi:
   ssid: !secret wifi_ssid

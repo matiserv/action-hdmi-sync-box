@@ -72,7 +72,7 @@ The strip has 84 LEDs in 28 addressable sections, colour order BRG.
 | [`esphome/components/syncbox/`](esphome/components/syncbox/) | the external component (strip driver, SPI receiver, mapping, calibration, satellites) and its notes (Polish) |
 | [`esphome/diagnostics/`](esphome/diagnostics/) | small configs used to find the strip pins; useful when porting to another board revision |
 | [`esp32/`](esp32/) | ESP32 firmware source (ESP-IDF 5.3.1 through PlatformIO) and development notes (Polish) |
-| [`firmware/esp32/`](firmware/esp32/) | prebuilt ESP32 firmware v14.6: application and full image, with SHA-256 sums |
+| [`firmware/esp32/`](firmware/esp32/) | prebuilt ESP32 firmware v14.7: application and full image, with SHA-256 sums |
 | [`tools/bench/`](tools/bench/) | test page and measurement scripts used for calibration and regression tests |
 | [`tools/uf2_to_obk.py`](tools/uf2_to_obk.py) | converts an ESPHome UF2 into a raw image for the OpenBeken flasher |
 | [`docs/`](docs/) | photos, reference calibration values, research notes on the video path (Polish) |
@@ -154,15 +154,17 @@ Do not publish your backups: they contain the vendor's firmware and device-speci
 about one time in ten. [`tools/uf2_to_obk.py`](tools/uf2_to_obk.py) turns a UF2 into a raw image for offset
 0x11000 if you only have the UF2.
 
-After the first flash all further updates go over Wi-Fi (ESPHome OTA). Logs are on UART1 (115200 baud) and over
-the network; P0 (UART2) belongs to the strip, so do not move the logger there.
+After the first flash all further updates go over Wi-Fi (ESPHome OTA). Logs go over the network. The example config
+keeps the serial output off (`baud_rate: 0`): at 115200 baud every log line blocks the main loop, the once-per-second
+statistics line for 16–22 ms, which is longer than a video frame. Set 115200 only while you debug with a UART
+adapter. P0 (UART2) belongs to the strip, so do not move the logger there.
 
 ## Step 3 — custom firmware on the ESP32
 
 Enter the bootloader (hold `5S1`, power cycle, release) and write the full image at offset 0:
 
 ```bash
-esptool --chip esp32 -p COM4 -b 460800 write-flash 0x0 firmware/esp32/syncbox_esp32_v14.6_full_0x0.bin
+esptool --chip esp32 -p COM4 -b 460800 write-flash 0x0 firmware/esp32/syncbox_esp32_v14.7_full_0x0.bin
 ```
 
 Any esptool-based flasher works; in a browser flasher set the offset to `0x0`:
@@ -177,7 +179,7 @@ on the same header (115200 8N1). The `upload` command
 takes a new application over the console, writes it to the inactive OTA slot and restarts:
 
 ```bash
-python esp32/esp32_upload.py COM4 firmware/esp32/syncbox_esp32_v14.6_app_0x20000.bin
+python esp32/esp32_upload.py COM4 firmware/esp32/syncbox_esp32_v14.7_app_0x20000.bin
 ```
 
 **Building from source:**
@@ -233,7 +235,7 @@ link between the two chips carries more than the picture:
 - **ESP32 firmware updates over Wi-Fi:**
 
   ```bash
-  python esp32/esp32_upload.py tcp://192.168.1.50:2323 firmware/esp32/syncbox_esp32_v14.6_app_0x20000.bin
+  python esp32/esp32_upload.py tcp://192.168.1.50:2323 firmware/esp32/syncbox_esp32_v14.7_app_0x20000.bin
   ```
 
   The uploaded firmware starts on trial. It is kept only if the link to the Wi-Fi module works after the restart;
@@ -375,12 +377,12 @@ If you try it, please report what you find.
 - The picture is sampled from a 1080p analog signal with about 14 000 samples per frame, so very fine,
   high-contrast detail at the edge is noisy by nature; the temporal filter hides it at the cost of slower
   response of single cells.
-- Satellites cost video frames on the BK7238: about 2 % of the packets coincide with a rejected frame
-  (2–3 frames per second at 2 × 60 packets/s). The cause is not established.
+- Satellites take main-loop time on the BK7238 (about 2.3 ms per packet): with two lamps the strip gets about
+  117 writes per second instead of 119, and about one video frame in 800 is processed late.
 - No microphone / music mode.
-- One Wi-Fi upload ended with the new firmware restarting before it was confirmed and the previous version coming
-  back; the cause was not found (the start history in `ver` was added because of it). The same image uploaded
-  again started normally.
+- After a software restart the ESP32's ADC controller sometimes delivers no samples (2 of 11 starts in one
+  series, none in the next 23). The firmware detects it at start and does a full chip reset, which makes that
+  start about 2 s longer. Why the controller stalls is not established.
 - End-to-end latency was estimated from its parts (about 14 ms from the end of a frame to the strip), not
   measured from screen to LED.
 

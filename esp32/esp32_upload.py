@@ -86,7 +86,26 @@ def read_until(token, timeout):
         buf += ser.read(4096)
         if token.encode() in buf or b"ERR" in buf:
             break
+    return clean(buf)
+
+
+def clean(buf):
     return re.sub(r"\x1b\[[0-9;]*m", "", buf.decode("utf-8", "replace"))
+
+
+# Odpowiedz komendy upload to cala linia zaczynajaca sie od READY / OK / ERR. Samo slowo nie wystarcza: tym samym
+# strumieniem ida linie logu ESP32, a np. opis planu probkowania zawiera "restart 12.11 us po zboczu". Skrypt bral to
+# za koniec wgrywania i rozlaczal sie z koncowka danych jeszcze w drodze; ESP32 zglaszal wtedy "ERR timeout".
+def read_reply(words, timeout):
+    pat = re.compile(r"(?:^|[\r\n])((?:" + "|".join(words) + r")\b[^\r\n]*)[\r\n]")
+    buf = b""
+    t_end = time.time() + timeout
+    while time.time() < t_end:
+        buf += ser.read(4096)
+        m = pat.search(clean(buf))
+        if m:
+            return m.group(1), clean(buf)
+    return "", clean(buf)
 
 
 ser.reset_input_buffer()
@@ -94,8 +113,8 @@ ser.write(b"\r")
 time.sleep(0.3)
 ser.reset_input_buffer()
 ser.write(f"upload {len(data)} {crc:08x}\r".encode())   # tylko CR: LF trafilby do strumienia danych
-txt = read_until("READY", 8)
-if "READY" not in txt:
+reply, txt = read_reply(["READY", "ERR"], 8)
+if not reply.startswith("READY"):
     print("brak READY:\n" + txt[-600:])
     sys.exit(1)
 print(f"wysylam {len(data)} B, crc {crc:08x} ...")
@@ -116,9 +135,10 @@ else:
             print(f"  {i * 100 // len(data)}%", end="\r", flush=True)
 ser.flush()
 print(f"  100% w {time.time() - t0:.1f} s")
-txt = read_until("restart", 60 if tcp else 20)
-print(txt.strip()[-300:])
-ok = "OK" in txt
+reply, txt = read_reply(["OK", "ERR"], 60 if tcp else 20)
+print(reply if reply else "brak odpowiedzi OK / ERR; koniec wyjscia konsoli:\n" + txt.strip()[-300:])
+ok = reply.startswith("OK")
+txt = reply
 if ok and tcp and not os.environ.get("SYNCBOX_UPLOAD_NO_CONFIRM"):   # zmienna tylko do testu samoczynnego powrotu
     # Nowy firmware jest na probie: potwierdza sie sam, gdy po restarcie znow dziala lacze z modulem Wi-Fi, a ono dziala
     # tylko przy podlaczonym kliencie konsoli. Zostajemy wiec polaczeni (albo laczymy sie od nowa) i pytamy o wersje.

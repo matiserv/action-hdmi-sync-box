@@ -4,7 +4,8 @@
 
 1. Skopiuj katalog `components/syncbox` do `/config/esphome/components/syncbox`.
 2. Skopiuj `hdmi-syncbox.yaml` do `/config/esphome/` i wpisz swoje Wi-Fi, klucz API i hasło OTA.
-3. Zainstaluj przez OTA. Logger musi zostać na `UART1`, bo `P0` (UART2) należy do taśmy.
+3. Zainstaluj przez OTA. Logger musi zostać na `UART1`, bo `P0` (UART2) należy do taśmy; w zwykłej pracy ustaw mu
+   `baud_rate: 0` (patrz v17.2: wydruk na port szeregowy wstrzymuje pętlę).
 
 ## Co jest w środku
 
@@ -339,3 +340,55 @@ Pomiary są w `esp32/README.md`, sekcja v14.4.
 
 Sprawdzone: kompilacja z satelitą `full` i bez satelitów; pakiety `full` z multicastem odebrane na komputerze
 (opis pomiaru w `esp32/README.md`, sekcja v14.6).
+
+## v17.2 (2026-11-13): gubione klatki przy ruchu Wi-Fi
+
+Objaw: z włączonymi satelitami box gubił 2–3 klatki wideo na sekundę (licznik „częściowe"), a taśma dostawała
+110 zapisów na sekundę zamiast 117–120. Przyczyny były dwie, obie po stronie BK7238.
+
+**1. Priorytet wątku odbioru SPI.** Wątek był tworzony z priorytetem 6 w numeracji Bekena, czyli natywnym 3 —
+poniżej pętli głównej ESPHome (6) i wszystkich zadań Wi-Fi i LwIP (4, 5, 7). Po każdej klatce wątek musi ponownie
+uzbroić odbiór DMA, zanim ESP32 zacznie następną (ok. 12 ms przy 8 MHz). Gdy pętla i zadania Wi-Fi były zajęte
+nadawaniem, nie dostawał procesora na czas i klatka przychodziła ucięta. Winne jest każde nadawanie, nie kod satelitów (`bench/wifiload.py`):
+
+| Ruch (satelity wyłączone, 8 MHz) | ucięte klatki/s |
+|---|---|
+| spokój | 0,1–0,2 |
+| UDP z komputera do zamkniętego portu boxa, 97–120/s (box odpowiada ICMP na każdy) | 1,6–4,0 |
+| UDP do otwartego portu 5353, 120/s (odbiór bez odpowiedzi) | 0,26 |
+| UDP rozgłoszeniowy, 120/s (odbiór bez odpowiedzi) | 0,22 |
+
+Strata zależała od długości przerwy między klatkami, czyli od zegara SPI (`set spi_hz` w konsoli ESP32): pod tym samym
+obciążeniem 5,0 % nadanych pakietów przy 4 MHz, 1,4–1,6 % przy 8 MHz, 0,2 % przy 16 i 20 MHz (przy 16 i 20 MHz bez
+ani jednej ramki z błędną sumą kontrolną). Wątek ma teraz priorytet 1 w numeracji Bekena (natywny 8, nad wszystkimi);
+pracuje 0,1–0,2 ms na klatkę. Zegar został na 8 MHz.
+
+**2. Wydruk logu na port szeregowy.** Logger ESPHome na LibreTiny pisze na UART synchronicznie. Przy 115200 bodów
+linia statystyk „klatki: …" (ok. 160 znaków, raz na sekundę) zajmowała pętlę główną na 16–22 ms (pole „log … us"
+w tej samej linii), z linią „satelity: …" jeszcze dłużej — dłużej niż okres klatki, więc następna klatka przepadała
+(licznik „zgubione"). Każda inna linia logu (np. publikacja czujnika na poziomie DEBUG) kosztuje ok. 7 ms. Poprawka
+jest w konfiguracji: `logger: baud_rate: 0`. Log idzie dalej przez Wi-Fi (API), a `log_frames: true` może zostać.
+Do pracy z adapterem UART wystarczy na ten czas przywrócić `baud_rate: 115200`.
+
+Pomiar (`bench/satflick.py`: satelity wyłączone / włączone / wyłączone, po 40 s; dwie lampy, razem ok. 88
+pakietów na sekundę; źródło 60 kl./s):
+
+| Stan | satelity | klatki wideo/s | stracone klatki/s | zapisy taśmy/s |
+|---|---|---|---|---|
+| przed | wył. | 59,9 | 0,05–0,1 | 116,5–116,7 |
+| przed | wł. | 56,9 | 2,5 | 109,7 |
+| priorytet wątku | wył. | 60,0 | 0,03–0,35 | 115,6–117,7 |
+| priorytet wątku | wł. | 60,0 | 1,0 | 111,3 |
+| priorytet wątku + `baud_rate: 0` | wył. | 60,0 | 0–0,03 | 116,9–119,0 |
+| priorytet wątku + `baud_rate: 0` | wł. | 60,0 | 0,08 | 116,8 |
+
+„Stracone" = ucięte (przed poprawką) albo nieprzetworzone na czas (po niej). Pomiar sam obciąża box: skrypt czyta
+liczniki z logu przez API, więc każda linia logu jest szyfrowana i wysyłana.
+
+Zmiana uboczna: wątek SPI może teraz wejść w dowolnym miejscu pętli głównej (wcześniej nigdy jej nie przerywał).
+Bufory konsoli i stan z ESP32 były już na to przygotowane (jeden piszący i jeden czytający, licznik spójności);
+poprawiona została kolejność przy rozłączaniu klienta, który nie doczekał się odpowiedzi ESP32 (najpierw wyłączenie
+tunelu, potem flaga zerowania).
+
+Wysyłka do jednej lampy nadal trwa średnio 2,3 ms w pętli głównej (najdłużej 8 ms); to ona odpowiada za różnicę
+119 → 117 zapisów taśmy na sekundę przy włączonych satelitach.

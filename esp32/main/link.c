@@ -175,6 +175,9 @@ void link_get_stats(link_stats_t *s)
 // sie go poprawic bez kabla. Dlatego: przed restartem zapisujemy "trial = 1"; nowy obraz przy starcie zmienia to na 2
 // i czeka na poprawne bloki z BK (klient konsoli, ktory wgrywal, jest dalej podlaczony). Jesli przyjda - trial = 0.
 // Jesli nie przyjda w 120 s albo uklad zrestartuje sie wczesniej (przy starcie zastajemy 2) - wraca poprzednia partycja.
+#ifndef TRIAL_CONFIRM_BLOCKS
+#define TRIAL_CONFIRM_BLOCKS 20      // poprawne bloki z BK potrzebne do potwierdzenia (wieksza wartosc tylko w buildzie testowym)
+#endif
 static void trial_write(uint8_t v)
 {
     nvs_handle_t h;
@@ -199,7 +202,7 @@ static void trial_task(void *arg)
 {
     for (int i = 0; i < 1200; i++) {
         vTaskDelay(pdMS_TO_TICKS(100));
-        if (s_st.dn_ok >= 20) {
+        if (s_st.dn_ok >= TRIAL_CONFIRM_BLOCKS) {
             trial_write(0);
             s_trial = 0;
             ESP_LOGI(TAG, "firmware na probie potwierdzony (lacze z BK dziala)");
@@ -211,6 +214,11 @@ static void trial_task(void *arg)
 }
 
 void link_trial_arm(void) { trial_write(1); }
+// Pelny reset ukladu w trakcie proby (przetwornik zawieszony po restarcie programowym - capture_hard_reset) to nie
+// wada nowego obrazu. Bez tego start po takim resecie zastawal stan 2 ("restart przed potwierdzeniem") i wracal
+// poprzedni firmware: w serii wgran tej samej wersji 1 na 6. Proba zaczyna sie po resecie od nowa (pelne 120 s).
+// Petli nie bedzie: capture nie ponawia pelnego resetu, jesli poprzedni nie pomogl.
+void link_trial_rearm(void) { if (s_trial == 2) trial_write(1); }
 uint8_t link_trial_state(void) { return s_trial; }
 
 void link_trial_boot(void)

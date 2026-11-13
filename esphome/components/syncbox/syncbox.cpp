@@ -52,6 +52,7 @@ static const uint8_t CROP_SHRINK_FRAMES = 90;  // kadr sie zmniejsza (nowy pas):
 static const float MIX_KNEE = 16.0f;         // srodek ciemniejszy niz to nie doswietla wcale
 static const float MIX_TAU_US = 200000.0f;   // narastanie doswietlenia (stala czasowa); opadanie natychmiast
 static const int MIX_MIN_CELLS = 4;          // najmniejsza glebokosc pasa "srodka"
+static const uint8_t SPI_THREAD_PRIORITY = 1;  // numeracja Bekena: natywny priorytet FreeRTOS 8 (opis przy tworzeniu watku)
 
 #ifdef SYNCBOX_VIDEO
 static void syncbox_spi_task(void *arg) { static_cast<SyncBox *>(arg)->spi_task_(); }
@@ -115,8 +116,13 @@ void SyncBox::setup() {
       ESP_LOGE(TAG, "SPI slave DMA init nieudany (%d)", r);
       this->status_set_warning();
     } else {
-      OSStatus st = rtos_create_thread((beken_thread_t *) &this->spi_thread_, 6, "syncbox_spi", syncbox_spi_task,
-                                       4096, this);
+      // Priorytet w numeracji Bekena (mniejsza liczba = wazniejszy; natywny FreeRTOS = 9 - liczba). Bylo 6 (natywny 3):
+      // ponizej petli glownej ESPHome (natywny 6) i wszystkich zadan Wi-Fi / LwIP (4, 5, 7). Watek musi po kazdej
+      // klatce ponownie uzbroic odbior DMA, zanim ESP32 zacznie nastepna (ok. 12 ms przy 8 MHz); gdy petla i zadania
+      // Wi-Fi byly zajete nadawaniem, nie dostawal procesora na czas i klatka przychodzila ucieta (ok. 3 % nadanych
+      // pakietow, takze samych odpowiedzi ICMP). Teraz jest nad wszystkimi; pracuje ok. 0,1-0,2 ms na klatke.
+      OSStatus st = rtos_create_thread((beken_thread_t *) &this->spi_thread_, SPI_THREAD_PRIORITY, "syncbox_spi",
+                                       syncbox_spi_task, 4096, this);
       this->spi_started_ = (st == kNoErr);
       if (!this->spi_started_) {
         ESP_LOGE(TAG, "Nie udało się utworzyć wątku SPI (%d)", (int) st);
@@ -1092,8 +1098,8 @@ void SyncBox::console_loop_() {
     if ((uint32_t) (millis() - this->con_reset_ms_) > 3000) {
       static const char MSG[] = "ERR ESP32 nie odpowiada na laczu zwrotnym\n";
       this->con_client_->write(MSG, sizeof(MSG) - 1);
+      this->console_close_("ESP32 nie odpowiada");  // najpierw wylacza tunel: watek SPI moze wejsc miedzy te linie
       this->tun_resetting_ = false;
-      this->console_close_("ESP32 nie odpowiada");
     }
     return;
   }

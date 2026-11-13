@@ -72,7 +72,7 @@ Taśma ma 84 diody w 28 adresowalnych sekcjach, kolejność kolorów BRG.
 | [`esphome/components/syncbox/`](esphome/components/syncbox/) | komponent zewnętrzny (sterownik taśmy, odbiornik SPI, mapowanie, kalibracja, satelity) i jego notatki |
 | [`esphome/diagnostics/`](esphome/diagnostics/) | małe konfiguracje, którymi szukane były piny taśmy; przydatne przy przenoszeniu na inną wersję płytki |
 | [`esp32/`](esp32/) | źródła firmware ESP32 (ESP-IDF 5.3.1 przez PlatformIO) i notatki z rozwoju |
-| [`firmware/esp32/`](firmware/esp32/) | gotowy firmware ESP32 v14.6: aplikacja i pełny obraz, z sumami SHA-256 |
+| [`firmware/esp32/`](firmware/esp32/) | gotowy firmware ESP32 v14.7: aplikacja i pełny obraz, z sumami SHA-256 |
 | [`tools/bench/`](tools/bench/) | strona testowa i skrypty pomiarowe do kalibracji i testów regresji |
 | [`tools/uf2_to_obk.py`](tools/uf2_to_obk.py) | zamienia UF2 z ESPHome na surowy obraz dla flashera OpenBeken |
 | [`docs/`](docs/) | zdjęcia, wzorcowe wartości kalibracji, notatki o torze wideo |
@@ -152,15 +152,17 @@ Nie publikuj swoich kopii: zawierają firmware producenta i dane konkretnego urz
 raz na dziesięć prób. [`tools/uf2_to_obk.py`](tools/uf2_to_obk.py) robi z UF2 surowy obraz pod offset 0x11000,
 jeśli masz tylko UF2.
 
-Po pierwszym wgraniu wszystkie kolejne aktualizacje idą po Wi-Fi (OTA ESPHome). Logi są na UART1 (115200 bodów)
-i po sieci; P0 (UART2) należy do taśmy, więc nie przenoś tam loggera.
+Po pierwszym wgraniu wszystkie kolejne aktualizacje idą po Wi-Fi (OTA ESPHome). Logi idą po sieci. Przykładowa
+konfiguracja ma wyjście szeregowe wyłączone (`baud_rate: 0`): przy 115200 bodów każda linia logu wstrzymuje pętlę
+główną, a linia statystyk raz na sekundę na 16–22 ms, czyli dłużej niż klatka obrazu. 115200 ustawiaj tylko na czas
+pracy z adapterem UART. P0 (UART2) należy do taśmy, więc nie przenoś tam loggera.
 
 ## Krok 3 — własny firmware na ESP32
 
 Wejdź w tryb programowania (przytrzymaj `5S1`, wyłącz i włącz zasilanie, puść) i wgraj pełny obraz od adresu 0:
 
 ```bash
-esptool --chip esp32 -p COM4 -b 460800 write-flash 0x0 firmware/esp32/syncbox_esp32_v14.6_full_0x0.bin
+esptool --chip esp32 -p COM4 -b 460800 write-flash 0x0 firmware/esp32/syncbox_esp32_v14.7_full_0x0.bin
 ```
 
 Nadaje się każdy flasher oparty na esptool; we flasherze w przeglądarce ustaw offset `0x0`:
@@ -175,7 +177,7 @@ konsolę na tym samym złączu (115200 8N1). Komenda
 `upload` przyjmuje nową aplikację przez konsolę, zapisuje ją do nieaktywnej partycji OTA i restartuje układ:
 
 ```bash
-python esp32/esp32_upload.py COM4 firmware/esp32/syncbox_esp32_v14.6_app_0x20000.bin
+python esp32/esp32_upload.py COM4 firmware/esp32/syncbox_esp32_v14.7_app_0x20000.bin
 ```
 
 **Kompilacja ze źródeł:**
@@ -228,7 +230,7 @@ układami niesie więcej niż obraz:
 - **Aktualizacja firmware ESP32 przez Wi-Fi:**
 
   ```bash
-  python esp32/esp32_upload.py tcp://192.168.1.50:2323 firmware/esp32/syncbox_esp32_v14.6_app_0x20000.bin
+  python esp32/esp32_upload.py tcp://192.168.1.50:2323 firmware/esp32/syncbox_esp32_v14.7_app_0x20000.bin
   ```
 
   Wgrany firmware startuje na próbę. Zostaje tylko wtedy, gdy po restarcie działa łącze z modułem Wi-Fi; inaczej
@@ -367,12 +369,12 @@ Jeśli spróbujesz, daj znać, co wyszło.
   z komputera; źródeł HDR nadających YCbCr, HLG i Dolby Vision nie mierzono.
 - Obraz jest próbkowany z analogowego sygnału 1080p, ok. 14 000 próbek na klatkę, więc bardzo drobne, kontrastowe
   detale przy krawędzi z natury szumią; filtr czasowy to ukrywa kosztem wolniejszej reakcji pojedynczych komórek.
-- Satelity kosztują BK7238 ramki obrazu: ok. 2 % pakietów zbiega się z odrzuconą ramką (2–3 ramki na sekundę
-  przy 2 × 60 pakietów/s). Przyczyna nie jest ustalona.
+- Satelity zajmują czas pętli głównej BK7238 (ok. 2,3 ms na pakiet): przy dwóch lampach taśma dostaje ok. 117
+  zapisów na sekundę zamiast 119, a mniej więcej jedna klatka obrazu na 800 jest przetwarzana z opóźnieniem.
 - Nie ma trybu muzycznego z mikrofonu.
-- Jedno wgranie przez Wi-Fi skończyło się restartem nowego firmware przed potwierdzeniem i powrotem poprzedniej
-  wersji; przyczyny nie ustalono (z tego powodu `ver` pokazuje teraz historię startów). Ten sam obraz wgrany
-  ponownie wstał normalnie.
+- Po restarcie programowym kontroler ADC w ESP32 czasem nie oddaje próbek (2 z 11 startów w jednej serii, ani razu
+  w kolejnych 23). Firmware wykrywa to przy starcie i robi pełny reset układu, przez co taki start trwa ok. 2 s
+  dłużej. Przyczyna zawieszania się kontrolera nie jest ustalona.
 - Opóźnienie całego toru jest oszacowane z części składowych (ok. 14 ms od końca klatki do taśmy), a nie
   zmierzone od ekranu do diody.
 

@@ -556,3 +556,47 @@ Komponent modułu Wi-Fi (v17.1) dostał w tym samym przeglądzie trzy poprawki �
 
 Jedno wgranie v14.6 (pierwsze, jeszcze przez v14.5) nie doszło do końca i ESP32 został na starej wersji; komunikat
 błędu nie został zapisany. Powtórzenie przeszło.
+
+## v14.7 (2026-11-13): dwa wyjaśnione błędy wgrywania przez Wi-Fi
+
+Wcześniejsze nieudane wgrania (v14.5: restart przed potwierdzeniem i powrót poprzedniej wersji; v14.6: wgranie, które
+„nie doszło do końca") miały dwie różne przyczyny. Obie zostały złapane w seriach wgrań tego samego obrazu z zapisem
+wyjścia konsoli.
+
+**1. Pełny reset przy starcie odrzucał obraz na próbie (firmware).** Po restarcie programowym kontroler cyfrowy ADC
+czasem nie oddaje próbek (w serii z v14.6: 2 z 11 startów; w kolejnych 23 startach v14.7 ani razu). Test przy starcie
+wykrywa to po ok. 0,8 s i robi pełny reset układu przez watchdog RTC — to działało od dawna. Próba nowego obrazu
+potwierdza się jednak dopiero po ok. 1,1 s, więc start po tym resecie zastawał stan „restart przed potwierdzeniem"
+i wracał poprzedni firmware. Zapis z nieudanego wgrania:
+
+```
+I (777) capture: ADC: kontroler cyfrowy, 3968 slow i 0 konwersji w 4 ms -> ... w FIFO 0.0 %
+E (778) capture: przetwornik nie oddaje probek przy starcie -> pelny reset ukladu
+```
+
+a w historii startów (`ver`): `v14.6/ota_1/3 <- v14.6/ota_0/7 <- v14.6/ota_0/3`. Teraz `capture_hard_reset()`
+przed resetem cofa stan próby z „na próbie" do „uzbrojona" (`link_trial_rearm()`), więc po pełnym resecie próba
+zaczyna się od nowa. Pętli nie będzie: pełny reset nie jest ponawiany, jeśli poprzedni nie pomógł.
+
+**2. Skrypt brał linię logu za koniec wgrywania (`esp32_upload.py`).** Skrypt czekał na słowo `restart` albo `ERR`
+gdziekolwiek w wyjściu konsoli. Tym samym strumieniem idą linie logu ESP32, a opis planu próbkowania zawiera
+„restart 12.11 us po zboczu". Gdy plan został przebudowany w trakcie wgrywania, skrypt uznawał wgrywanie za skończone
+i rozłączał się, zanim końcówka danych przeszła przez tunel; ESP32 po 5 s zgłaszał `ERR timeout po 387072 B`
+(brakowało dokładnie ostatnich 3696 B). Skrypt czeka teraz na całą linię zaczynającą się od `READY`, `OK` albo `ERR`.
+Samej linii planu w nieudanym wgraniu nie mam w zapisie (zapisywane było tylko wyjście po restarcie); wniosek
+wynika z tego, że skrypt skończył ok. 7 s przed komunikatem `ERR timeout`, a brakowało samej końcówki.
+
+Liczba poprawnych bloków potrzebna do potwierdzenia próby jest stałą kompilacji `TRIAL_CONFIRM_BLOCKS` (20); większa
+wartość służy tylko do testu poniżej.
+
+| Test (wszystko przez Wi-Fi) | Wynik |
+|---|---|
+| v14.6 przez v14.6, 6 razy | 5 udanych, 1 powrót do poprzedniej partycji (historia: reset 7 na nowej partycji) |
+| v14.6 z zapisem startu, do pierwszej awarii | 4. wgranie: zapis jak wyżej, powrót do poprzedniej partycji |
+| v14.7, 3 wgrania starym skryptem | 3 udane; czwarte: `ERR timeout po 387072 B` (błąd skryptu) |
+| v14.7, 16 wgrań poprawionym skryptem | 16 udanych, po 10,5 s; w tej serii przetwornik ani razu się nie zawiesił |
+| Obraz testowy (`-DTRIAL_CONFIRM_BLOCKS=900`), `hardreset` w trakcie próby | po resecie ta sama partycja, „próba 2", po 15 s z klientem „próba 0" |
+| Łącze po testach | 0 błędnych bloków |
+
+Przyczyna samego zawieszania się przetwornika po restarcie programowym nadal nie jest ustalona; kosztuje ok. 2 s
+dłuższy start.

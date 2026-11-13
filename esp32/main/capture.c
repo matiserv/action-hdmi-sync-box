@@ -25,6 +25,7 @@
 #include "sync.h"
 #include "spi_out.h"
 #include "hdmi.h"
+#include "link.h"
 #include "hdr_tables.h"
 #include <string.h>
 #include <math.h>
@@ -1022,6 +1023,7 @@ static void dig_stop(void)
 void capture_hard_reset(const char *why)
 {
     ESP_LOGE(TAG, "%s -> pelny reset ukladu", why);
+    link_trial_rearm();                      // firmware na probie: ten reset nie jest jego wada
     vTaskDelay(pdMS_TO_TICKS(50));
     wdt_hal_context_t ctx = RWDT_HAL_CONTEXT_DEFAULT();
     wdt_hal_init(&ctx, WDT_RWDT, 0, false);

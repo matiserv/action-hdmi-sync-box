@@ -10,7 +10,7 @@
 //   6..7   szerokosc wejscia, 8..9 wysokosc (mlodszy bajt pierwszy), 10 odswiezanie Hz, 11 'P' / 'I'
 //   12..13 licznik zanikow VSync, 14..15 licznik zmian formatu wejscia
 //   16..19 czas od startu w sekundach
-//   20     wersja firmware x 10 (146 = v14.6)
+//   20     wersja firmware x 10 (147 = v14.7)
 //   21     numer porcji tunelu w gore, 22 numer ostatniej przyjetej porcji w dol, 23 rezerwa
 //   24..25 dlugosc porcji w gore, 26.. dane (do LINK_UP_PAY bajtow)
 //   ostatnie 2 bajty: CRC16 (CCITT, 0xFFFF) z calej reszty bloku, starszy bajt pierwszy
@@ -27,7 +27,7 @@
 #include "freertos/FreeRTOS.h"
 #include "pins.h"
 
-#define LINK_FW_VERSION 146                      // v14.6
+#define LINK_FW_VERSION 147                      // v14.7
 #define LINK_UP_HDR     26
 #define LINK_UP_PAY     (AUX_BYTES - LINK_UP_HDR - 2)
 #define LINK_DN_MAX     1024
@@ -54,6 +54,7 @@ bool link_last_input_from_tunnel(void);
 void link_trial_arm(void);          // przed restartem po wgraniu przez tunel
 void link_trial_boot(void);         // na starcie, po nvs_flash_init
 uint8_t link_trial_state(void);     // 0 nie, 1 uzbrojony, 2 na probie
+void link_trial_rearm(void);        // przed pelnym resetem ukladu: proba zacznie sie po nim od nowa
 
 typedef struct {
     uint32_t dn_ok, dn_bad, dn_none;     // bloki w dol: poprawne, z bledem CRC/dlugosci, bez znacznika
