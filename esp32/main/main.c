@@ -113,7 +113,7 @@ void app_main(void)
     link_trial_boot();                        // firmware wgrany przez Wi-Fi: na probe albo powrot do poprzedniego
     {
         const esp_partition_t *run = esp_ota_get_running_partition();
-        ESP_LOGI(TAG, "syncbox ESP32 v14.5 start, partycja %s", run ? run->label : "?");
+        ESP_LOGI(TAG, "syncbox ESP32 v14.6 start, partycja %s", run ? run->label : "?");
     }
 
     esp_register_freertos_idle_hook_for_cpu(core1_no_sleep_hook, 1);

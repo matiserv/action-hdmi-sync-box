@@ -4,7 +4,7 @@
 # Co robi:
 #  - tasma: UART2 na P0, 6,5 Mbaud 6N1 jak fabryczny firmware (inwerter na plytce), BRG, 28 sekcji
 #  - P24: zasilanie/enable tasmy (aktywne LOW), wylaczane razem ze swiatlem
-#  - wideo: odbior klatek 16x16 RGB (768 B) z ukladu wideo po SPI slave z DMA (P14-P17),
+#  - wideo: odbior pola 48x27 RGB z naglowkiem i blokiem stanu ESP32 (4416 B) po SPI slave z DMA (P14-P17),
 #    mapowanie na boki, wykrywanie czarnych pasow, wygladzanie, nasycenie, jasnosc, auto-off
 #  - sceny = efekty ESPHome, kolor statyczny i malowanie sekcji z Home Assistant
 #  - przycisk P26: krotko = wlacz/wylacz, 3 s = reset ustawien (w tym Wi-Fi)

@@ -211,6 +211,8 @@ def main():
     i = 0
     while i < len(args):
         if args[i] in opts:
+            if i + 1 >= len(args):
+                print(f"opcja {args[i]} wymaga wartości"); return 2
             opts[args[i]] = type(opts[args[i]])(args[i + 1]); i += 2
         elif args[i].startswith("--"):
             flags.add(args[i]); i += 1

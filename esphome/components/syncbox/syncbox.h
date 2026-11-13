@@ -40,7 +40,7 @@ enum SatelliteMode : uint8_t {
   SAT_TOP = 3,      // ... gornego
   SAT_RIGHT = 4,    // ... prawego
   SAT_BOTTOM = 5,   // ... dolnego
-  SAT_FULL = 6,     // cala siatka wideo (16x16 = 256 px, 170 px na universe -> universe, universe+1)
+  SAT_FULL = 6,     // cala siatka wideo, 170 px na universe (48x27 = 1296 px -> 8 kolejnych universe)
   SAT_ROOM = 7,     // obwod pokoju: kolory krawedzi ekranu rozlozone po odcinkach tasmy lampy (segs)
 };
 
@@ -474,6 +474,8 @@ class SyncBox : public Component {
   bool sat_pending_{false};
   bool sat_hold_{false};  // trwa zapis posredni tasmy: bez wysylki do satelitow
   uint32_t sat_us_sum_{0}, sat_us_max_{0}, sat_us_cnt_{0};  // czas obslugi jednego satelity (liczenie + UDP)
+  bool sat_full_{false};              // jest satelita `full`: loop() robi kopie pola dla wysylki
+  std::vector<uint8_t> full_snap_;    // kopia pola (eff_w x eff_h x 3) z chwili przetworzenia klatki
 #endif
 };
 

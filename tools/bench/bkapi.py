@@ -13,6 +13,7 @@ nie trafia do wiersza polecen ani do wynikow.
     bk.close()
 """
 import asyncio
+import os
 import re
 import threading
 import time
@@ -21,11 +22,20 @@ from aioesphomeapi import APIClient, LogLevel
 
 
 def read_key(yaml_path):
+    """Klucz API z pliku YAML urzadzenia: wpisany wprost albo jako `!secret nazwa` (wtedy z secrets.yaml obok)."""
     txt = open(yaml_path, encoding="utf-8").read()
-    m = re.search(r"encryption:\s*\n\s*key:\s*\"?([A-Za-z0-9+/=]+)\"?", txt)
+    m = re.search(r"encryption:\s*\n\s*key:\s*(!secret\s+)?\"?([A-Za-z0-9+/=_]+)\"?", txt)
     if not m:
         raise SystemExit("brak api.encryption.key w " + yaml_path)
-    return m.group(1)
+    if not m.group(1):
+        return m.group(2)
+    sec = os.path.join(os.path.dirname(os.path.abspath(yaml_path)), "secrets.yaml")
+    if not os.path.exists(sec):
+        raise SystemExit(f"klucz API jest podany jako !secret {m.group(2)}, a obok {yaml_path} nie ma secrets.yaml")
+    k = re.search(r"^" + re.escape(m.group(2)) + r":\s*\"?([A-Za-z0-9+/=]+)\"?\s*(#.*)?$", open(sec, encoding="utf-8").read(), re.M)
+    if not k:
+        raise SystemExit(f"w {sec} nie ma wpisu {m.group(2)}")
+    return k.group(1)
 
 
 class Bk:

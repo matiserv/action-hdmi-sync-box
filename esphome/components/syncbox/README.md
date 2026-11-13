@@ -12,7 +12,7 @@
 |---|---|
 | Sterowanie taśmą (UART2 P0, 6,5 Mbaud 6N1, inwerter, BRG) | hub `syncbox` + `light: platform: syncbox` (światło adresowalne, 28 sekcji) |
 | Zasilanie taśmy P24 | `enable_pin` (aktywne LOW), odcinane gdy światło wyłączone |
-| Synchronizacja HDMI (SPI slave DMA, klatki 16x16 RGB) | wątek SPI w hubie, mapowanie na boki; włączana jak scena: efekt światła `syncbox_video` ("Synchronizacja HDMI") |
+| Synchronizacja HDMI (SPI slave DMA, pole do 48x27 RGB z nagłówkiem) | wątek SPI w hubie, mapowanie na boki; włączana jak scena: efekt światła `syncbox_video` ("Synchronizacja HDMI") |
 | Montaż 3/4-stronny, róg startowy, kierunek | `layout:` |
 | Kalibracja odstępu od krawędzi (DP 102-110) | `number` "Kalibracja: odstęp ..." + `depth` |
 | Wykrywanie czarnych pasów 21:9 / 4:3 | `letterbox_detection` (20 klatek stabilizacji, próg 30/255) |
@@ -66,8 +66,9 @@ syncbox:
       max_fps: 30
 ```
 
-- `full` - cała siatka wideo 16×16 (256 px RGB, wierszami od góry) po poziomach/balansie/gammie, w dwóch
-  kolejnych universach (`universe`: px 0–169, `universe+1`: px 170–255); dla matryc WLED, Hyperion, drugiego boxa.
+- `full` - cała siatka wideo (wierszami od góry) po poziomach/balansie/gammie, po 170 px na universe w kolejnych
+  universach od `universe`: pole 48×27 to 1296 px w ośmiu universach, 16×16 to 256 px w dwóch. Bez `address`
+  każdy universe idzie do własnej grupy multicast. Dla matryc WLED, Hyperion, drugiego boxa.
 - `average` - jeden kolor (średnia całej taśmy) powtórzony `leds` razy; `left/top/right/bottom` - średnia
   danego boku (np. lampa stojąca po lewej stronie TV dostaje kolor lewego boku); `mirror` - kopia
   wszystkich sekcji 1:1 (drugi box z ESPHome przy drugim TV albo pasek WLED tej samej długości).
@@ -163,6 +164,10 @@ albo `update_interval` efektu. Każda odebrana klatka budzi pętlę główną od
 pokazują oba tempa.
 
 ## Protokół SPI, którego oczekuje odbiornik (dla własnego firmware ESP32)
+
+Poniżej format podstawowy, bez nagłówka (domyślne `frame_size: 768`). Firmware ESP32 z tego repozytorium wysyła
+ramki z nagłówkiem, sumą kontrolną i blokiem stanu (`frame_size: 4416`) — opis w sekcjach v13, v14 i v17 oraz
+w `esp32/main/link.h`.
 
 - ESP32 jest masterem, BK7238 slave na P14 (SCK), P15 (CS), P16 (MOSI), P17 (MISO).
 - Jedna klatka = jedno opuszczenie CS: CS w dół, `frame_size` bajtów (domyślnie 768 = 16x16x3),
@@ -319,3 +324,18 @@ syncbox:
   połączenie (`socket.consume_sockets`).
 
 Pomiary są w `esp32/README.md`, sekcja v14.4.
+
+## v17.1 (2026-11-13): poprawki po przeglądzie kodu
+
+- **Satelita `full` z multicastem:** adres grupy był wyliczany raz, z pierwszego universe lampy, więc pakiety
+  kolejnych universe (pole 48×27 zajmuje osiem) szły do grupy pierwszego. Teraz każdy universe ma swój adres
+  `239.255.<hi>.<lo>`. Przy `address` ustawionym wprost nic się nie zmienia.
+- **Satelita `full` czyta kopię pola.** Pakiety idą z końca `loop()`, już po oddaniu bufora klatki wątkowi SPI, który
+  mógł w tym czasie wpisywać następną klatkę; pakiety mogły zawierać fragmenty dwóch klatek. Kopia (pole × 3 bajty)
+  jest robiona tylko wtedy, gdy w konfiguracji jest satelita `full`.
+- **Stan wejścia HDMI:** tekst „HDMI: wejście” nie jest publikowany z kopii stanu, której nie udało się odczytać spójnie
+  (cztery kolizje z wątkiem SPI z rzędu); liczniki i flagi były już tak chronione.
+- Czas obsługi satelity `full` wchodzi do statystyki „satelity: … obsługa śr. … us”.
+
+Sprawdzone: kompilacja z satelitą `full` i bez satelitów; pakiety `full` z multicastem odebrane na komputerze
+(opis pomiaru w `esp32/README.md`, sekcja v14.6).

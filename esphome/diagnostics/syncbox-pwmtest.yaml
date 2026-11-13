@@ -6,7 +6,9 @@
 # przez ok. 2 sekundy po nacisnieciu przycisku. Wgrywaj przez OTA (esphome run / strona WWW).
 
 bk72xx:
-  board: t1-u
+  # generic-bk7238, nie t1-u: po wgraniu przez OpenBeken w module siedzi jego bootloader (klasyczny uklad Bekena).
+  # Uklad t1-u szykuje OTA dla bootloadera Tuya i pod OBK "instaluje sie" bez efektu. Piny sa te same.
+  board: generic-bk7238
   framework:
     version: recommended
     loglevel: warn

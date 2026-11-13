@@ -1,4 +1,4 @@
-"""Podgląd "oczami ESP32": nagrywa siatki 16x16 dla kolorowej szachownicy w kilku wariantach filtrowania
+"""Podgląd "oczami ESP32": nagrywa siatki dla kolorowej szachownicy w kilku wariantach filtrowania
 i zapisuje stronę HTML z animacją (ekran obok tego, co widzi ESP32, plus mapa migotania).
 Użycie: python visualize.py COM4 [plik_wyjściowy.html]
 """

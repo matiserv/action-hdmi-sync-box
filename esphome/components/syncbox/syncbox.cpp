@@ -301,6 +301,14 @@ void SyncBox::loop() {
   this->link_loop_();
   if (this->frame_ready_) {
     this->process_frame_();
+#ifdef SYNCBOX_SATELLITES
+    // Satelita `full` wysyla cale pole pozniej, z konca loop(). Kopia teraz, poki bufor nalezy do petli: po zwolnieniu
+    // flagi watek SPI wpisuje do frame_buf_ nastepna klatke i pakiety szlyby z dwoch klatek naraz.
+    if (this->sat_full_) {
+      const uint8_t *f = this->frame_buf_ + this->pix_off_;
+      this->full_snap_.assign(f, f + (size_t) this->eff_w_ * this->eff_h_ * 3);
+    }
+#endif
     this->frame_ready_ = false;
   }
   if (this->interpolate_ && !this->interp_done_)
@@ -450,6 +458,8 @@ void SyncBox::add_satellite(const std::string &name, const std::string &address,
   sat.address = address;
   sat.universe = universe;
   sat.mode = mode;
+  if (mode == SAT_FULL)
+    this->sat_full_ = true;
   sat.leds = leds == 0 ? 1 : (leds > 170 ? 170 : leds);
   sat.brightness = clamp(brightness, 0.0f, 1.0f);
   sat.min_interval_us = 1000000 / (max_fps == 0 ? 1 : max_fps);
@@ -603,7 +613,21 @@ bool SyncBox::send_e131_(Satellite &sat, const uint8_t *data, size_t channels, u
   pkt[124] = dmx & 0xFF;
   pkt[125] = 0x00;  // DMX start code
   memcpy(pkt + 126, data, channels);
-  const ssize_t w = this->udp_->sendto(pkt, total, 0, (struct sockaddr *) &sat.addr, sat.addrlen);
+  // Multicast (bez `address`): kazdy universe ma wlasna grupe 239.255.<hi>.<lo>. Zapamietany adres dotyczy pierwszego
+  // universe lampy; kolejne (tryb `full`) dostaja adres wyliczony z numeru - wczesniej szly do grupy pierwszego.
+  struct sockaddr_storage dst_buf;
+  const struct sockaddr *dst = (const struct sockaddr *) &sat.addr;
+  socklen_t dst_len = sat.addrlen;
+  if (universe_offset != 0 && sat.address.empty()) {
+    char b[24];
+    snprintf(b, sizeof(b), "239.255.%u.%u", (unsigned) (universe >> 8), (unsigned) (universe & 0xFF));
+    const socklen_t l = socket::set_sockaddr((struct sockaddr *) &dst_buf, sizeof(dst_buf), b, 5568);
+    if (l != 0) {
+      dst = (const struct sockaddr *) &dst_buf;
+      dst_len = l;
+    }
+  }
+  const ssize_t w = this->udp_->sendto(pkt, total, 0, dst, dst_len);
   if (w < 0) {
     this->sat_errors_++;
     return false;
@@ -650,8 +674,9 @@ void SyncBox::send_satellites_(const uint8_t *rgb, size_t num_leds, bool light_o
     if (sat.mode == SAT_FULL) {
 #ifdef SYNCBOX_VIDEO
       // cala siatka po LUT (poziomy, balans bieli, gamma), wierszami od gory, 170 px na universe
-      const size_t total_px = (size_t) this->eff_w_ * this->eff_h_;
-      const uint8_t *f = this->frame_buf_ + this->pix_off_;
+      // z kopii pola (loop()): do frame_buf_ watek SPI moze juz wpisywac nastepna klatke
+      const size_t total_px = this->full_snap_.size() / 3;
+      const uint8_t *f = this->full_snap_.data();
       const uint8_t ir = this->pix_order_[0], ig = this->pix_order_[1], ib = this->pix_order_[2];
       if (this->lut_dirty_)
         this->rebuild_lut_();
@@ -667,6 +692,11 @@ void SyncBox::send_satellites_(const uint8_t *rgb, size_t num_leds, bool light_o
       }
 #endif
       sat.last_tx_us = now;
+      const uint32_t us_full = micros() - t_sat;      // czas obslugi liczony takze dla `full`
+      this->sat_us_sum_ += us_full;
+      this->sat_us_cnt_++;
+      if (us_full > this->sat_us_max_)
+        this->sat_us_max_ = us_full;
       continue;
     }
     // Pozostale tryby: kolor docelowy kazdej diody (1/256 poziomu tasmy) -> wygladzanie w czasie -> jasnosc ->
@@ -956,9 +986,10 @@ void SyncBox::link_loop_() {
     memcpy(st, this->aux_raw_, sizeof(st));
     g1 = this->aux_gen_;
   } while ((g0 != g1 || (g0 & 1)) && ++tries < 4);
+  const bool st_ok = tries < 4;  // false: cztery proby z rzedu trafily na zapis watku SPI - `st` moze byc sklejone
   const bool ever = this->aux_frames_ != 0;
   this->esp_fresh_ = ever && (uint32_t) (now - this->aux_seen_ms_) < 1500;
-  if (this->esp_fresh_ && tries < 4) {
+  if (this->esp_fresh_ && st_ok) {
     this->esp_flags_ = st[4];
     if (this->esp_ver_logged_ != st[20]) {
       this->esp_ver_logged_ = st[20];
@@ -976,7 +1007,8 @@ void SyncBox::link_loop_() {
 #endif
     }
   }
-  if (ever && (uint32_t) (now - this->link_pub_ms_) >= 500) {
+  // tekst stanu czyta `st` tylko przy swiezych danych; z niespojnej kopii nie publikujemy (nastepne przejscie petli)
+  if (ever && (st_ok || !this->esp_fresh_) && (uint32_t) (now - this->link_pub_ms_) >= 500) {
     this->link_pub_ms_ = now;
     char txt[48];
     if (!this->esp_fresh_) {

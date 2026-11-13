@@ -525,3 +525,34 @@ zgłaszał „potwierdzony”, gdy odpowiedział poprzedni firmware po powrocie.
 Nie wyjaśnione: pierwsze wgranie v14.5 (jeszcze ze starego v14.4) skończyło się restartem nowego obrazu przed
 potwierdzeniem i powrotem do v14.4. Ten sam obraz wgrany później wstał bez problemu. Wtedy nie było jeszcze historii
 startów; przy powtórce `ver` pokaże przyczynę.
+
+## v14.6 (2026-11-13): poprawki po przeglądzie kodu
+
+Zewnętrzny przegląd repozytorium wskazał kilka przypadków brzegowych; każdy został sprawdzony w kodzie i poprawiony.
+
+- **Alokacje przy starcie:** bufory ramek i odbioru w `spi_out.c` oraz bufory konsoli w `link_init()` nie były
+  sprawdzane. Brak pamięci kończy teraz start komunikatem i przerwaniem programu (po czterech takich startach ochrona
+  przed pętlą restartów wraca do poprzedniej partycji) zamiast zapisu pod adres zerowy w pierwszej ramce.
+- **Wejście konsoli „całość albo nic”:** do wspólnego strumienia wejścia piszą dwa zadania (odbiór z UART0 i wątek SPI
+  z danymi z tunelu). Wolne miejsce było sprawdzane poza zamkiem; gdy drugie zadanie zajęło je w międzyczasie, porcja
+  z tunelu wchodziła w części, a mimo to była potwierdzana. `link_in_push()` sprawdza miejsce i wpisuje pod jednym
+  zamkiem, a przy braku miejsca nic nie wpisuje i nie potwierdza (moduł Wi-Fi powtórzy porcję).
+- `s_busy` w `spi_out.c` jest zerowane w tej samej sekcji krytycznej, w której czyta je `spi_out_submit()`.
+- `chtest` nie przyjmuje już parametru, którego i tak nie używał; `help` wymienia `digrate`, `digsync`, `digidx`, `hold`.
+- Nagrywanie ramek: opis w `capture.h` podawał 8, firmware nagrywa najwyżej 4. `bench.Esp.frames(n)` zbiera większe
+  `n` porcjami po 4, więc skrypty proszące o 8 ramek dostają 8.
+- `bench/bkapi.py` czyta klucz API także z `!secret` (z `secrets.yaml` obok pliku YAML); `hdrtest.py` zgłasza brak
+  wartości opcji zamiast wyjątku.
+
+Komponent modułu Wi-Fi (v17.1) dostał w tym samym przeglądzie trzy poprawki — opis w `components/syncbox/README.md`.
+
+| Test (ESP32 v14.6, komponent v17.1, wszystko przez Wi-Fi) | Wynik |
+|---|---|
+| Wgranie v14.6 przez v14.6 (390 KB przez nowe wejście konsoli) | 10,6 s, potwierdzone |
+| `frames(8)` przez tunel | 8 ramek 48 × 27 |
+| Satelita `full`, multicast, pole 48 × 27 (odbiór na komputerze, jedna grupa naraz) | universe 100–107 każdy tylko w swojej grupie `239.255.0.<n>`, 7 × 510 i 1 × 318 kanałów; w grupie 108 nic |
+| Kolory HDR (`hdrtest.py colors`) | błąd barwy średnio 1,5°, największy 5,1° (kod konwersji bez zmian; w v14.5 było 1,2° i 3,0°) |
+| Łącze po testach | 0 błędnych bloków |
+
+Jedno wgranie v14.6 (pierwsze, jeszcze przez v14.5) nie doszło do końca i ESP32 został na starej wersji; komunikat
+błędu nie został zapisany. Powtórzenie przeszło.

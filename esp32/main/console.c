@@ -34,8 +34,12 @@ static void cmd_help(void)
            "  ascii                - ostatnia ramka jako jasnosc (znaki)\n"
            "  glitch               - ostatni wykryty blysk: ramka przed i po, kolumny\n"
            "  digtest              - test szybkiego ADC (kontroler cyfrowy + FIFO I2S bez DMA)\n"
+           "  digrate              - tryb cyfrowy: tempo konwersji, kolejnosc kanalow, zachowanie flagi FIFO\n"
+           "  digsync              - tryb cyfrowy: czas pierwszych slow po restarcie przetwornika i ich kanaly\n"
+           "  digidx [us]          - tryb cyfrowy: srednia kazdej kolejnej probki po restarcie (restart [us] po HSync)\n"
            "  frames [n]           - nagraj n (max 4) kolejnych ramek i wydrukuj (hex RRGGBB)\n"
            "  trace [n]            - sredni kolor srodka pola w n (max 240) kolejnych ramkach\n"
+           "  hold <0|1>           - 1 = wstrzymaj probkowanie (wysylane jest ostatnie pole), 0 = wznow\n"
            "  params               - aktualne parametry\n"
            "  set <nazwa> <wartosc>- zmiana parametru (patrz params): black_mv, white_mv, hoff, hblank, vstart, vlines,\n"
            "                         cut, gain, gamma, flip_h, flip_v, rep, lat, sar_div, sar_cycle, vsync_neg, hsync_neg,\n"
@@ -375,13 +379,11 @@ static void cmd_upload(uint32_t len, uint32_t crc_expected)
 
 // Test kanalow: ta sama chwila w linii (offset_us), kolejne linie probkujace z kanalami R,G,G,B,B,R.
 // Jesli "G po R" rozni sie od "G po G", kondensator probkujacy SAR pamieta poprzedni kanal.
-static void cmd_chtest(const char *off_s)
+static void cmd_chtest(void)
 {
-    float off = off_s ? (float)atof(off_s) : 6.0f;
     capture_hprof_start(0.0f, 32, 1, true);
     hprof_t *h = (hprof_t *)capture_hprof_get();
     h->step_cyc = 0;
-    (void)off;
     for (int i = 0; i < 300 && h->active; i++) vTaskDelay(pdMS_TO_TICKS(10));
     if (h->active) { printf("test nie skonczony (brak sygnalu?)\n"); return; }
     static const char *names[6] = {"R po R", "G po R", "G po G", "B po G", "B po B", "R po B"};
@@ -420,7 +422,7 @@ static void handle_line(char *line)
         cmd_upload((uint32_t)strtoul(l, NULL, 0), (uint32_t)strtoul(c, NULL, 16));
     }
     else if (!strcmp(cmd, "hprof")) { char *a = strtok(NULL, " \t"); cmd_hprof(a, strtok(NULL, " \t")); }
-    else if (!strcmp(cmd, "chtest")) cmd_chtest(strtok(NULL, " \t"));
+    else if (!strcmp(cmd, "chtest")) cmd_chtest();
     else if (!strcmp(cmd, "pattern")) {
         char *v = strtok(NULL, " \t");
         g_params.pattern = v ? (uint8_t)atoi(v) : 0;
@@ -546,8 +548,7 @@ static void uart_in_task(void *arg)
     for (;;) {
         int n = uart_read_bytes(UART_NUM_0, buf, sizeof(buf), pdMS_TO_TICKS(20));
         if (n <= 0) continue;
-        while (link_in_space() < (size_t) n) vTaskDelay(1);     // konsola zajeta (np. zapis flash przy upload)
-        link_in_push(buf, (size_t) n, false);
+        while (!link_in_push(buf, (size_t) n, false)) vTaskDelay(1);     // konsola zajeta (np. zapis flash przy upload)
     }
 }
 

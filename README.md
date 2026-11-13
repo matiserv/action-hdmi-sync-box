@@ -72,7 +72,7 @@ The strip has 84 LEDs in 28 addressable sections, colour order BRG.
 | [`esphome/components/syncbox/`](esphome/components/syncbox/) | the external component (strip driver, SPI receiver, mapping, calibration, satellites) and its notes (Polish) |
 | [`esphome/diagnostics/`](esphome/diagnostics/) | small configs used to find the strip pins; useful when porting to another board revision |
 | [`esp32/`](esp32/) | ESP32 firmware source (ESP-IDF 5.3.1 through PlatformIO) and development notes (Polish) |
-| [`firmware/esp32/`](firmware/esp32/) | prebuilt ESP32 firmware v14.5: application and full image, with SHA-256 sums |
+| [`firmware/esp32/`](firmware/esp32/) | prebuilt ESP32 firmware v14.6: application and full image, with SHA-256 sums |
 | [`tools/bench/`](tools/bench/) | test page and measurement scripts used for calibration and regression tests |
 | [`tools/uf2_to_obk.py`](tools/uf2_to_obk.py) | converts an ESPHome UF2 into a raw image for the OpenBeken flasher |
 | [`docs/`](docs/) | photos, reference calibration values, research notes on the video path (Polish) |
@@ -162,7 +162,7 @@ the network; P0 (UART2) belongs to the strip, so do not move the logger there.
 Enter the bootloader (hold `5S1`, power cycle, release) and write the full image at offset 0:
 
 ```bash
-esptool --chip esp32 -p COM4 -b 460800 write-flash 0x0 firmware/esp32/syncbox_esp32_v14.5_full_0x0.bin
+esptool --chip esp32 -p COM4 -b 460800 write-flash 0x0 firmware/esp32/syncbox_esp32_v14.6_full_0x0.bin
 ```
 
 Any esptool-based flasher works; in a browser flasher set the offset to `0x0`:
@@ -177,7 +177,7 @@ on the same header (115200 8N1). The `upload` command
 takes a new application over the console, writes it to the inactive OTA slot and restarts:
 
 ```bash
-python esp32/esp32_upload.py COM4 firmware/esp32/syncbox_esp32_v14.5_app_0x20000.bin
+python esp32/esp32_upload.py COM4 firmware/esp32/syncbox_esp32_v14.6_app_0x20000.bin
 ```
 
 **Building from source:**
@@ -233,7 +233,7 @@ link between the two chips carries more than the picture:
 - **ESP32 firmware updates over Wi-Fi:**
 
   ```bash
-  python esp32/esp32_upload.py tcp://192.168.1.50:2323 firmware/esp32/syncbox_esp32_v14.5_app_0x20000.bin
+  python esp32/esp32_upload.py tcp://192.168.1.50:2323 firmware/esp32/syncbox_esp32_v14.6_app_0x20000.bin
   ```
 
   The uploaded firmware starts on trial. It is kept only if the link to the Wi-Fi module works after the restart;

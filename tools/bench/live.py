@@ -1,5 +1,5 @@
 """Stabilność na tym, co akurat jest na ekranie (bez strony testowej): nagrywa serie ramek i pokazuje,
-które komórki siatki 16x16 zmieniają się w czasie i przy jakiej jasności.
+które komórki siatki zmieniają się w czasie i przy jakiej jasności.
 Użycie: python live.py COM4 [serie=6] ["komendy konsoli; ..."]
 """
 import importlib.util, os, statistics as st, sys, time

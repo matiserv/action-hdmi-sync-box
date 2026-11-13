@@ -95,7 +95,7 @@ typedef struct { uint32_t n, timeouts, t_min[3], t_max[3], t_sum[3], first_r, fi
 int capture_digsync(digsync_t *r);          // powtarzalnosc fazy probkowania po restarcie kontrolera cyfrowego
 int capture_digrate(digrate_t *r);          // tempo konwersji kontrolera cyfrowego, zachowanie flagi FIFO
 int capture_digtest(digtest_row_t *rows, int max_rows);   // test kontrolera cyfrowego ADC + FIFO I2S bez DMA
-void capture_record(uint32_t n);           // nagraj n kolejnych ramek (max 8)
+void capture_record(uint32_t n);           // nagraj n kolejnych ramek (max 4)
 uint32_t capture_record_done(void);        // 0 = jeszcze nagrywa, inaczej liczba ramek
 const uint8_t *capture_record_frame(uint32_t i);
 void capture_trace(uint32_t n);            // zapisz sredni kolor srodka pola w n kolejnych ramkach (max 240)

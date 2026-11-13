@@ -69,12 +69,20 @@ void link_out_write(const char *data, size_t n)
     }
 }
 
-void link_in_push(const uint8_t *data, size_t n, bool from_tunnel)
+// Calosc albo nic: miejsce jest sprawdzane i dane wpisywane pod jednym zamkiem. Pisza tu dwa zadania (odbior z UART0
+// i watek SPI z danymi z tunelu); przy sprawdzeniu poza zamkiem drugie moglo zajac miejsce w miedzyczasie, wpis
+// wchodzil w czesci, a porcja z tunelu byla mimo to potwierdzana.
+bool link_in_push(const uint8_t *data, size_t n, bool from_tunnel)
 {
+    bool ok = false;
     xSemaphoreTake(s_in_mux, portMAX_DELAY);
-    xStreamBufferSend(s_in, data, n, 0);
-    s_last_tunnel = from_tunnel;
+    if (xStreamBufferSpacesAvailable(s_in) >= n) {
+        xStreamBufferSend(s_in, data, n, 0);
+        s_last_tunnel = from_tunnel;
+        ok = true;
+    }
     xSemaphoreGive(s_in_mux);
+    return ok;
 }
 
 size_t link_in_read(uint8_t *buf, size_t max, TickType_t timeout) { return xStreamBufferReceive(s_in, buf, max, timeout); }
@@ -112,8 +120,7 @@ void link_parse_downlink(const uint8_t *rx, size_t n)
         s_up_len = 0;
         s_st.up_chunks++;
     }
-    if (len != 0 && seq != s_dn_last && link_in_space() >= len) {
-        link_in_push(p + 9, len, true);
+    if (len != 0 && seq != s_dn_last && link_in_push(p + 9, len, true)) {   // brak miejsca: BK powtorzy porcje
         s_dn_last = seq;
         s_st.dn_chunks++;
     }
@@ -229,4 +236,8 @@ void link_init(void)
     s_out = malloc(OUT_RING);
     s_in = xStreamBufferCreate(2560, 1);
     s_in_mux = xSemaphoreCreateMutex();
+    if (s_out == NULL || s_in == NULL || s_in_mux == NULL) {     // konsola (takze po UART) dziala tylko z tymi buforami
+        ESP_LOGE(TAG, "brak pamieci na bufory konsoli (wolne %u B)", (unsigned) esp_get_free_heap_size());
+        abort();
+    }
 }

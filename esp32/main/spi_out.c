@@ -113,6 +113,10 @@ static void spi_task(void *arg)
     int64_t last_end = 0, win_start = esp_timer_get_time();
     uint32_t win_frames = 0, tick = 0;
     uint8_t *pat = heap_caps_malloc(FRAME_BYTES, MALLOC_CAP_DMA);
+    if (pat == NULL) {                          // bez tego bufora nie ma ramek bez pola (stan HDMI, tunel konsoli)
+        ESP_LOGE(TAG, "brak pamieci na bufor ramki (wolne %u B)", (unsigned) heap_caps_get_free_size(MALLOC_CAP_DMA));
+        abort();
+    }
     s_idle = pat;
     uint8_t *pat_pix = NULL;                    // piksele wzoru testowego: ze sterty przy pierwszym uzyciu
     for (;;) {
@@ -169,7 +173,9 @@ static void spi_task(void *arg)
         esp_err_t e = spi_device_transmit(s_dev, &t);   // CS w dol na cala ramke
         last_end = esp_timer_get_time();
         if (!idle) s_last_tx_us = last_end;
+        portENTER_CRITICAL(&s_mux);                 // spi_out_submit() czyta s_busy pod tym samym zamkiem
         s_busy = -1;
+        portEXIT_CRITICAL(&s_mux);
         if (e == ESP_OK) {
             link_parse_downlink(s_rx, rxn);
             if (!idle) {
@@ -203,6 +209,12 @@ void spi_out_init(void)
     s_buf[1] = heap_caps_calloc(1, FRAME_BYTES, MALLOC_CAP_DMA);
     s_rx = heap_caps_calloc(1, (LINK_DN_RX + 3) & ~3u, MALLOC_CAP_DMA);
     s_sem = xSemaphoreCreateBinary();
+    if (!s_buf[0] || !s_buf[1] || !s_rx || !s_sem) {
+        // Start bez tych buforow konczylby sie zapisem pod adres 0 w pierwszej ramce. Lepiej przerwac od razu:
+        // po czterech takich startach ochrona przed petla restartow wraca do poprzedniego firmware.
+        ESP_LOGE(TAG, "brak pamieci na bufory SPI (wolne %u B)", (unsigned) heap_caps_get_free_size(MALLOC_CAP_DMA));
+        abort();
+    }
     xTaskCreatePinnedToCore(spi_task, "spi_out", 4096, NULL, 10, NULL, 0);   // rdzen 0; rdzen 1 zostaje dla przerwania HSync
 }
 

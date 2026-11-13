@@ -1,4 +1,4 @@
-"""Benchmark toru wideo syncbox-esp32: ustawia wzór na stronie testowej i porównuje z siatką 16x16 z ESP32.
+"""Benchmark toru wideo syncbox-esp32: ustawia wzór na stronie testowej i porównuje z siatką z ESP32 (domyślnie 48x27).
 
 Wymaga: działającego server.py, strony otwartej na ekranie za sync boxem (pełny ekran), ESP32 na porcie szeregowym.
 Użycie:  python bench.py COM4 [testy...]      testy: levels cells flash sweep (domyślnie wszystkie)
@@ -43,7 +43,16 @@ class Esp:
         return re.sub(r"\x1b\[[0-9;]*m", "", buf.decode("utf-8", "replace"))
 
     def frames(self, n):
-        """n kolejnych ramek jako lista [16][16] krotek (r,g,b)."""
+        """n ramek jako lista siatek [wiersz][kolumna] krotek (r, g, b). Firmware nagrywa najwyżej 4 kolejne ramki
+        na komendę, więc większe n jest zbierane porcjami (między porcjami jest przerwa na wydruk)."""
+        if n > 4:
+            out = []
+            while len(out) < n:
+                part = self.frames(min(4, n - len(out)))
+                if not part:
+                    break
+                out += part
+            return out
         txt = self.cmd(f"frames {n}", wait=1.0 + n * 0.5)   # pole 32x18: ok. 4 kB tekstu na ramke
         # ramki sa oddzielone liniami "ramka N:"; liczba wierszy zalezy od ustawienia siatki (16 albo 9)
         out = []

@@ -5,7 +5,9 @@
 #   1-99% = fala 1 kHz (test z elektrody: na 1. generacji rozswietlal tasme na bialo)
 
 bk72xx:
-  board: t1-u
+  # generic-bk7238, nie t1-u: po wgraniu przez OpenBeken w module siedzi jego bootloader (klasyczny uklad Bekena).
+  # Uklad t1-u szykuje OTA dla bootloadera Tuya i pod OBK "instaluje sie" bez efektu. Piny sa te same.
+  board: generic-bk7238
   framework:
     version: latest
     loglevel: none
