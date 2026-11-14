@@ -78,6 +78,7 @@ void SyncBox::setup() {
   this->interp_cur_.assign(this->seq_.size() * 3, 0.0f);
   this->seg_colors_.assign(this->seq_.size(), Color::BLACK);
   this->mix_v_.assign(this->seq_.size(), 0.0f);
+  this->mix_d_.assign(this->seq_.size(), 0.0f);
   this->eff_w_ = this->grid_w_;
   this->eff_h_ = this->grid_h_;
   this->crop_ = Crop{0, 0, (uint8_t) (this->grid_w_ - 1), (uint8_t) (this->grid_h_ - 1)};
@@ -153,6 +154,7 @@ void SyncBox::dump_config() {
                 "  Doświetlenie ze środka: %.0f %%",
                 (unsigned) this->refresh_interval_ms_, this->level_black_, this->level_white_, this->wb_[0],
                 this->wb_[1], this->wb_[2], this->video_gamma_, this->inner_mix_ * 100.0f);
+  ESP_LOGCONFIG(TAG, "  Przygaszanie przy ciemnym środku: %.0f %%", this->inner_dim_ * 100.0f);
 #ifdef SYNCBOX_VIDEO
   ESP_LOGCONFIG(TAG, "  Wątek SPI: %s", this->spi_started_ ? "działa" : "NIE działa");
 #endif
@@ -1380,8 +1382,8 @@ void SyncBox::process_frame_() {
     this->rebuild_lut_();
   const float sat = this->saturation_, vb = this->video_brightness_, alpha = 1.0f - this->smoothing_;
   const size_t n = this->seq_.size();
-  const float mix = this->inner_mix_;
-  const bool mix_on = mix > 0.0f && this->mix_v_.size() >= n;
+  const float mix = this->inner_mix_, dim = this->inner_dim_;
+  const bool mix_on = (mix > 0.0f || dim > 0.0f) && this->mix_v_.size() >= n && this->mix_d_.size() >= n;
   const float mix_att = std::min(1.0f, (float) this->frame_interval_us_ / MIX_TAU_US);
   for (size_t s = 0; s < n; s++) {
     uint8_t xa, xb, ya, yb;
@@ -1449,6 +1451,22 @@ void SyncBox::process_frame_() {
           fr += k * m_r;
           fg += k * m_g;
           fb += k * m_b;
+        }
+        // Przygaszanie przy ciemnym srodku (druga strona doswietlenia): gdy obraz w glebi jest ciemniejszy od
+        // krawedzi, sekcja traci `dim` tej roznicy jasnosci; kolor krawedzi zostaje. dim = 1: sekcja swieci tak
+        // jasno jak srodek. Tez bez progu: przy srodku rownym krawedzi nic sie nie zmienia. Jasnosc srodka
+        // narasta tu od razu, a opada ze stala czasowa MIX_TAU_US, zeby ciemne pojedyncze klatki nie migaly tasma.
+        // Doswietlenie i przygaszanie nie nakladaja sie: pierwsze wymaga srodka jasniejszego od krawedzi.
+        float &vd = this->mix_d_[s];
+        if (vm >= vd)
+          vd = vm;
+        else
+          vd += (vm - vd) * mix_att;
+        if (dim > 0.0f && vd < ve) {                // ve > vd >= 0
+          const float k = 1.0f - dim * (ve - vd) / ve;
+          fr *= k;
+          fg *= k;
+          fb *= k;
         }
       }
     }

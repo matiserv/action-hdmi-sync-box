@@ -274,6 +274,19 @@ number:
     on_value:
       - lambda: id(box).set_inner_mix(x / 100.0f);
   - platform: template
+    name: "Wideo: przygaszanie przy ciemnym srodku"
+    id: video_inner_dim
+    icon: mdi:brightness-4
+    optimistic: true
+    restore_value: true
+    initial_value: 50
+    min_value: 0
+    max_value: 100
+    step: 5
+    unit_of_measurement: "%"
+    on_value:
+      - lambda: id(box).set_inner_dim(x / 100.0f);   # 0 = wylaczone, 100 = tasma nie jasniejsza niz obraz w glebi
+  - platform: template
     name: "Wideo: balans R"
     id: wb_r
     optimistic: true

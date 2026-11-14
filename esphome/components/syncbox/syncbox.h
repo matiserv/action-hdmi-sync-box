@@ -173,6 +173,9 @@ class SyncBox : public Component {
       std::fill(this->mix_v_.begin(), this->mix_v_.end(), 0.0f);
   }
   float get_inner_mix() const { return this->inner_mix_; }
+  // Przygaszanie przy ciemnym srodku: 0 = wylaczone, 1 = sekcja nie swieci jasniej niz obraz w glebi.
+  void set_inner_dim(float s) { this->inner_dim_ = clamp(s, 0.0f, 1.0f); }
+  float get_inner_dim() const { return this->inner_dim_; }
   // Raz na sekunde kolory wszystkich sekcji w logu (do testow na stanowisku).
   void set_log_sections(bool b) { this->log_sections_ = b; }
   // Pojedyncze skladowe kalibracji (suwaki w HA ustawiaja je niezaleznie, takze przy starcie).
@@ -332,7 +335,9 @@ class SyncBox : public Component {
   uint8_t headerless_run_{0};   // kolejne ramki bez poprawnego naglowka (po ramkach z naglowkiem)
   // doswietlenie ze srodka: udzial i wygladzona jasnosc srodka kazdej sekcji
   float inner_mix_{0.0f};
-  std::vector<float> mix_v_;
+  float inner_dim_{0.0f};
+  std::vector<float> mix_v_;  // jasnosc srodka do doswietlenia: narasta powoli, opada od razu
+  std::vector<float> mix_d_;  // jasnosc srodka do przygaszania: narasta od razu, opada powoli
   // interpolacja miedzy klatkami: tasma odswiezana ~60 Hz takze przy wolnym zrodle
   bool interpolate_{true};
   std::vector<float> interp_from_;

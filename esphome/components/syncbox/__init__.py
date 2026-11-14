@@ -53,6 +53,7 @@ CONF_SIGNAL_TIMEOUT = "signal_timeout"
 CONF_AUTO_OFF = "auto_off"
 CONF_LOG_FRAMES = "log_frames"
 CONF_INNER_MIX = "inner_mix"
+CONF_INNER_DIM = "inner_dim"
 CONF_INTERPOLATION = "interpolation"
 CONF_VIDEO_FPS = "video_fps"
 CONF_LED_FPS = "led_fps"
@@ -165,6 +166,8 @@ VIDEO_SCHEMA = cv.Schema(
         cv.Optional(CONF_LOG_FRAMES, default=False): cv.boolean,
         # doswietlenie ze srodka obrazu: 0 = wylaczone, 25% = krawedz swieci co najmniej 1/4 swiatla z glebi obrazu
         cv.Optional(CONF_INNER_MIX, default=0.0): cv.percentage,
+        # przygaszanie przy ciemnym srodku: 0 = wylaczone, 100% = krawedz nie swieci jasniej niz obraz w glebi
+        cv.Optional(CONF_INNER_DIM, default=0.0): cv.percentage,
         cv.Optional(CONF_INTERPOLATION, default=True): cv.boolean,
         # kalibracja kolorow obrazu (do zmiany w locie przez set_video_levels / set_white_balance / set_video_gamma)
         cv.Optional(CONF_BLACK_LEVEL, default=0): cv.int_range(min=0, max=200),
@@ -373,6 +376,7 @@ async def to_code(config):
     cg.add(var.set_auto_off(v[CONF_AUTO_OFF]))
     cg.add(var.set_log_frames(v[CONF_LOG_FRAMES]))
     cg.add(var.set_inner_mix(v[CONF_INNER_MIX]))
+    cg.add(var.set_inner_dim(v[CONF_INNER_DIM]))
     cg.add(var.set_interpolation(v[CONF_INTERPOLATION]))
     cg.add(var.set_video_levels(v[CONF_BLACK_LEVEL], v[CONF_WHITE_LEVEL]))
     wb = v[CONF_WHITE_BALANCE]

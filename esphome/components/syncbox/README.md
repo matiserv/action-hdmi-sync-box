@@ -392,3 +392,67 @@ tunelu, potem flaga zerowania).
 
 Wysyłka do jednej lampy nadal trwa średnio 2,3 ms w pętli głównej (najdłużej 8 ms); to ona odpowiada za różnicę
 119 → 117 zapisów taśmy na sekundę przy włączonych satelitach.
+
+## v17.3 (2026-11-14): przygaszanie przy ciemnym środku
+
+Druga strona doświetlenia ze środka. Suwak „Wideo: przygaszanie przy ciemnym środku" (0–100 %; `video.inner_dim`
+w YAML, domyślnie 0 = wyłączone). Gdy obraz w głębi jest ciemniejszy od krawędzi, sekcja traci ustawiony procent
+tej różnicy jasności; kolor krawędzi zostaje:
+
+    środek sekcji = ten sam pas co przy doświetleniu (od prostokąta sekcji do osi kadru)
+    jeśli jasność środka < jasność krawędzi:
+        wynik = krawędź × (1 − procent × (jasność krawędzi − jasność środka) / jasność krawędzi)
+
+- 0 % nie zmienia nic; 100 % znaczy, że sekcja świeci tak jasno jak środek (przy czarnym środku gaśnie).
+- Bez progu: przy środku równym krawędzi wynik jest taki sam jak bez przygaszania, więc nic nie przeskakuje.
+- Jasność środka używana do przygaszania narasta od razu, a opada ze stałą czasową 0,2 s — pojedyncze ciemne klatki
+  nie migają taśmą. (Przy doświetleniu jest odwrotnie: narasta powoli, opada od razu.)
+- Doświetlenie i przygaszanie nie nakładają się: pierwsze działa tylko przy środku jaśniejszym od krawędzi.
+- Powód: przy małej głębokości próbkowania jasny, kontrastowy brzeg obrazu (ramka okna, pasek interfejsu) rozświetlał
+  taśmę mimo ciemnej reszty ekranu. Pierwszym lekarstwem jest większa głębokość próbkowania (4–5 komórek to 15–19 %
+  wysokości ekranu); przygaszanie działa także wtedy, gdy jasny jest szeroki pas przy brzegu.
+
+Sprawdzone wzorem testowym ESP32 (`pattern 2`: boki i góra w pełnych kolorach, środek czarny), bez sygnału HDMI,
+z głębokością 5: kolory 28 sekcji z logu zgadzają się z modelem (`bench/bkmodel.py`) co do poziomu przy 0, 50
+i 100 %; średnia jasność sekcji 111 → 69 → 27 (`bench/dimcheck.py`).
+
+Na całym torze (`bench/dimtest.py`: wzory wyświetlane na telewizorze za boxem w HDR, pole odczytane z ESP32, kolory
+sekcji z logu), głębokość 5, doświetlenie 25 %, 6 wzorów × 3 ustawienia — różnica taśma–model najwyżej 1 poziom:
+
+| Wzór | jasność górnych sekcji przy 0 / 50 / 100 % |
+|---|---|
+| jasny brzeg (5 komórek), czarny środek | 185 / 113 / 41 |
+| jasny brzeg, szary środek | 199 / 144 / 90 |
+| jednolity szary | 95 / 95 / 95 |
+| ciemny brzeg, jasny środek | 35 / 35 / 35 |
+| wąska jasna ramka (1 komórka), reszta ciemna | 20 / 13 / 7 |
+| pomarańczowy brzeg, czarny środek | 220 / 134 / 48 (barwa bez zmian: D43801 → 6A1C00) |
+
+Sekcje przy rogach przygasają mniej, bo ich „środek" obejmuje jasny pas sąsiedniej krawędzi.
+
+**Pomiar licznikami sam gubi klatki.** Liczniki są tylko w logu, a wysłanie jednej linii logu do klienta API
+(szyfrowanie i TCP) zajmuje pętlę na ok. 5 ms; linie „klatki:" i „satelity:" razem ok. 11 ms. Z dwiema lampami
+i podłączonym odbiorcą logu daje to ok. 0,9 zgubionej klatki na sekundę, a bez odbiorcy 0,17 (11 w 64 s, razem
+z dwoma krótkimi odczytami liczników; `bench/satquiet.py`). Skrypty z ciągłym podglądem logu zawyżają więc straty.
+Bez satelitów: 0–1 zgubiona klatka na 30 s także z odbiorcą.
+
+### Kalibracja kolorów taśmy zdjęciami (2026-11-14)
+
+Odczyt obrazu przez ESP32 jest dokładny (16 kolorów w HDR: błąd barwy średnio 1,6°, biel 248/250/249), więc o zgodności
+poświaty z ekranem decyduje to, co świeci taśma. `bench/calshow.py` wyświetla na ekranie za boxem pełnoekranowe plansze
+(czerń, biel, szarości, R, G, B, C, M, Y), na ten czas wyłącza doświetlenie, przygaszanie i nasycenie, a dla każdej
+planszy zapisuje, co box wysłał na taśmę. Telefon fotografuje ekran razem z poświatą w jednym kadrze, przy stałej
+ekspozycji i balansie bieli; `bench/rawcal.py` (wymaga `rawpy`, `numpy`, `pillow`) liczy z plików DNG średnie liniowe
+kolory ekranu i poświaty w zaznaczonych polach.
+
+Co wyszło na egzemplarzu wzorcowym (ściana ciemna, sufit z jasnych paneli):
+
+- Przy balansie 1,0 / 1,0 / 1,0 biel poświaty była fioletowa, a turkus niebieski. Po poprawce R 0,86 / G 1,0 / B 0,64
+  (gamma 1,8) udziały kanałów w bieli, turkusie i purpurze zgadzały się z ekranem w granicach kilku punktów procentowych.
+- Jasność poświaty względem ekranu była taka sama przy bieli i przy szarym 128 (0,185 i 0,183).
+- Żółty z taśmy jest bledszy i bardziej zielonkawy niż na ekranie (zielona dioda ma chłodniejszy odcień); balans bieli
+  tego nie poprawia.
+- **JPEG z telefonu się do tego nie nadaje:** z bieli wychodził nadmiar niebieskiego 4-krotny, z plików RAW tej samej
+  sceny po poprawce — kilkuprocentowy. Aparat przetwarza nasycone kolory nieliniowo.
+- **Aparat nie zastępuje oka:** przy zgodności w RAW w granicach 10 % aparat widział w poświacie za mało zielonego,
+  a obserwator za dużo. Ostatni krok robi się na oko; właściciel ustawił ostatecznie R 1,0 / G 0,86 / B 0,60 i gammę 1,3.

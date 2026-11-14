@@ -23,6 +23,7 @@ entry point.
 ## Contents
 
 - [How the box works](#how-the-box-works)
+- [How the ESP32 sends video to the BK7238](#how-the-esp32-sends-video-to-the-bk7238)
 - [Repository layout](#repository-layout)
 - [What you need](#what-you-need)
 - [PCB: where to connect and what to press](#pcb-where-to-connect-and-what-to-press)
@@ -62,6 +63,49 @@ The same SPI link also carries the HDMI status to the Wi-Fi module and, on the r
 see [Without the cable](#without-the-cable-status-console-and-updates-over-wi-fi).
 
 The strip has 84 LEDs in 28 addressable sections, colour order BRG.
+
+## How the ESP32 sends video to the BK7238
+
+The ESP32 never sends the picture itself, only a small colour field: 48 × 27 cells, three bytes each, once per
+source frame. The link is plain SPI with one transfer per frame.
+
+**Wiring and timing.** The ESP32 is the master (SCLK GPIO4, CS GPIO5, MOSI GPIO27, MISO GPIO16), the BK7238 the
+slave (P14 SCK, P15 CS, P16 MOSI, P17 MISO). Mode 0, most significant bit first, 8 MHz (`set spi_hz`, 1–20 MHz).
+The ESP32 samples the picture while a frame is on screen; at the end of the frame it finishes the field (blur,
+smoothing, levels, HDR conversion) and sends it, so there is one transfer per source frame, 60 per second with a
+60 Hz source. CS stays low for the whole transfer. A full frame takes 4.4 ms at 8 MHz, and the ESP32 leaves at
+least 0.6 ms between transfers so that the slave can re-arm its DMA receive.
+
+**Frame layout** (4416 bytes with the 48 × 27 field: 16 + 3888 + 512; this is `frame_size` in the YAML):
+
+| Offset | Bytes | Content |
+|---|---|---|
+| 0 | 4 | `SBG2` |
+| 4 | 2 | field width W and height H in cells |
+| 6 | 2 | W and H inverted bit by bit (a second check of the header) |
+| 8 | 1 | frame counter |
+| 9 | 2 | sum of all field bytes, 16 bits, low byte first |
+| 11 | 1 | flags; bit 0 = the sum is present |
+| 12 | 4 | `5A A5 C3 3C` |
+| 16 | W × H × 3 | the field: rows from the top, cells from the left, R, G, B, one byte each |
+| 16 + W × H × 3 | 512 | status block `SBX1`: HDMI input state and format, HDR mode, drop-out counters, firmware version, console output, CRC16 |
+
+The field size travels in every header, so it can be changed on the ESP32 (`set grid_w`, `set grid_h`) without
+touching the BK7238 configuration. Without a video signal the ESP32 sends a frame without a field (W = H = 0,
+1128 bytes) that carries only the status block: five times a second, or every 16 ms while a console client is
+connected.
+
+**Receiving.** A thread on the BK7238 waits in a DMA receive for `frame_size` bytes or the rising edge of CS. A frame
+is used only if the marker bytes, the inverted sizes and the byte sum agree; otherwise it is dropped and counted
+(`częściowe` and `błędne` in the log line `klatki:`), and the strip keeps its colours until the next frame. This
+thread runs above the Wi-Fi tasks: it has about 12 ms between frames to re-arm the receive, and when it ran below
+them every Wi-Fi transmission could cost a frame. The main loop then maps the field to the 28 strip sections
+(see [Calibration](#calibration)).
+
+**Return direction.** During the same transfer the BK7238 can answer on MISO. It does so only while a client is
+connected to the console port: a block `SBD1` with up to 1024 bytes of console input (commands, or a firmware
+image during an update). Both directions send one portion at a time and repeat it in every frame until the other
+side acknowledges its number. The exact format of both blocks is in [`esp32/main/link.h`](esp32/main/link.h).
 
 ## Repository layout
 
@@ -319,7 +363,7 @@ display fed through the box, and run the scripts in `tools/bench/` with the ESP3
 ### ESPHome (Home Assistant sliders)
 
 The colour chain on the BK7238 is: mean of the edge cells (`depth`) → black/white level → white balance → gamma
-→ saturation → inner mix → brightness → smoothing → temporal dithering.
+→ saturation → inner mix and centre dimming → brightness → smoothing → temporal dithering.
 
 1. **Strip geometry** (YAML `layout:`): number of sections per side, `start_corner`, `direction`. The reference
    mounting, seen from the back of the TV:
@@ -336,6 +380,10 @@ The colour chain on the BK7238 is: mean of the edge cells (`depth`) → black/wh
 6. **Smoothing:** "Wideo: wygładzanie" (0 = none). The ESP32 already filters noise, so small values are enough.
 7. **Inner mix:** "Wideo: doświetlenie ze środka" (0–40 %) adds light from deeper in the picture when the edge is
    much darker than the interior.
+8. **Centre dimming:** "Wideo: przygaszanie przy ciemnym środku" (0–100 %, off in the example config) is the
+   opposite case: when the interior is darker than the edge, the section loses that share of the difference in
+   brightness, keeping the edge colour. Use it if a bright, contrasty edge lights the strip up while the rest
+   of the screen is dark; try a larger sampling depth first.
 
 Values used on the reference unit: gamma 2.6, saturation 1.2–1.8, smoothing 0.3, white balance 1.0 / 1.0 / 1.0,
 side offsets 1, inner mix 25 %. Sliders are stored in flash and survive updates.

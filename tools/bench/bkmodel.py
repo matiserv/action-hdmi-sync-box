@@ -7,6 +7,7 @@ import math
 
 # ustawienia toru BK7238 (jak w hdmi-syncbox.yaml; odczytywane z urzadzenia nizej)
 CFG = {"gamma": 1.8, "wb": [1.0, 1.0, 0.85], "black": 0.0, "white": 255.0, "sat": 1.5, "depth": 2, "bright": 1.0,
+       "dim": 0.0,
        "off": {"L": 0, "G": 0, "P": 0}}
 SIDES = {"L": 7, "G": 14, "P": 7}
 KNEE = 16.0
@@ -18,14 +19,15 @@ W, H = 48, 27
 def read_cfg(states):
     """Stany suwakow (od v15 sa tozsame z tym, na czym pracuje komponent)."""
     names = {"Wideo: gamma": "gamma", "Wideo: poziom czerni": "black", "Wideo: poziom bieli": "white",
-             "Wideo: nasycenie": "sat", "Wideo: glebokosc probkowania": "depth", "Wideo: jasnosc": "bright"}
+             "Wideo: nasycenie": "sat", "Wideo: glebokosc probkowania": "depth", "Wideo: jasnosc": "bright",
+             "Wideo: przygaszanie przy ciemnym srodku": "dim"}
     wb = {"Wideo: balans R": 0, "Wideo: balans G": 1, "Wideo: balans B": 2}
     offs = {"Kalibracja: odstep lewy bok": "L", "Kalibracja: odstep gorny bok": "G", "Kalibracja: odstep prawy bok": "P"}
     for n, v in states.items():
         if v is None:
             continue
         if n in names:
-            CFG[names[n]] = float(v) / 100.0 if names[n] == "bright" else float(v)
+            CFG[names[n]] = float(v) / 100.0 if names[n] in ("bright", "dim") else float(v)
         elif n in wb:
             CFG["wb"][wb[n]] = float(v)
         elif n in offs:
@@ -56,9 +58,12 @@ def span(base, total, count, i, reverse):
     return a, max(a, b)
 
 
-def model(field, crop, mix, as_float=False):
+def model(field, crop, mix, as_float=False, dim=None):
     """Kolory sekcji wg toru BK7238 w stanie ustalonym. field[y][x] = (r,g,b); crop = (x0,x1,y0,y1); mix 0..1.
-    as_float: wartosci ulamkowe (przed zaokragleniem do poziomow tasmy)."""
+    as_float: wartosci ulamkowe (przed zaokragleniem do poziomow tasmy). dim: przygaszanie przy ciemnym srodku
+    0..1 (None = z ustawien urzadzenia, CFG)."""
+    if dim is None:
+        dim = CFG["dim"]
     cx0, cx1, cy0, cy1 = crop
     cw, ch = cx1 - cx0 + 1, cy1 - cy0 + 1
     d = CFG["depth"]
@@ -90,13 +95,15 @@ def model(field, crop, mix, as_float=False):
             deep = (ib - ia + 1) if side != "G" else (jb - ja + 1)
             sat = lambda v: [min(max(sum(v) / 3.0 + (t - sum(v) / 3.0) * CFG["sat"], 0.0), 255.0) for t in v]
             f = sat(f)
-            if mix > 0 and deep >= MIN_CELLS:          # doswietlenie: po nasyceniu krawedzi i srodka
+            if (mix > 0 or dim > 0) and deep >= MIN_CELLS:   # doswietlenie / przygaszanie: po nasyceniu krawedzi i srodka
                 ic = [field[y][x] for y in range(ja, jb + 1) for x in range(ia, ib + 1)]
                 m = sat([sum(round(lutf(c, p[c])) for p in ic) / len(ic) for c in range(3)])
                 vm, ve = max(m), max(f)
                 lift = mix * (vm - KNEE) - ve
                 if lift > 0:
                     f = [f[c] + lift / vm * m[c] for c in range(3)]
+                if dim > 0 and vm < ve:
+                    f = [v * (1.0 - dim * (ve - vm) / ve) for v in f]
             out[side].append(tuple(v * CFG["bright"] for v in f) if as_float
                              else tuple(int(v * CFG["bright"] + 0.5) for v in f))
     return out

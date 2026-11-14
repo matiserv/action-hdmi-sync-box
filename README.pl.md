@@ -23,6 +23,7 @@ angielski odpowiednik.
 ## Spis treści
 
 - [Jak działa box](#jak-działa-box)
+- [Jak ESP32 wysyła wideo do BK7238](#jak-esp32-wysyła-wideo-do-bk7238)
 - [Układ repozytorium](#układ-repozytorium)
 - [Co jest potrzebne](#co-jest-potrzebne)
 - [Płytka: gdzie się podłączyć i co nacisnąć](#płytka-gdzie-się-podłączyć-i-co-nacisnąć)
@@ -62,6 +63,48 @@ To samo łącze SPI niesie też stan HDMI do modułu Wi-Fi, a linią zwrotną ko
 patrz [Bez kabla](#bez-kabla-stan-konsola-i-aktualizacje-przez-wi-fi).
 
 Taśma ma 84 diody w 28 adresowalnych sekcjach, kolejność kolorów BRG.
+
+## Jak ESP32 wysyła wideo do BK7238
+
+ESP32 nie wysyła samego obrazu, tylko małe pole kolorów: 48 × 27 komórek po trzy bajty, raz na klatkę źródła.
+Łącze to zwykłe SPI, jedna transmisja na klatkę.
+
+**Połączenie i czasy.** ESP32 jest masterem (SCLK GPIO4, CS GPIO5, MOSI GPIO27, MISO GPIO16), BK7238 slave'em
+(P14 SCK, P15 CS, P16 MOSI, P17 MISO). Tryb 0, najstarszy bit pierwszy, 8 MHz (`set spi_hz`, 1–20 MHz). ESP32
+próbkuje obraz, gdy klatka jest na ekranie; po jej końcu domyka pole (rozmycie, wygładzanie, poziomy, konwersja
+HDR) i je wysyła, więc na każdą klatkę źródła przypada jedna transmisja — 60 na sekundę przy źródle 60 Hz. CS jest
+nisko przez całą transmisję. Pełna ramka trwa 4,4 ms przy 8 MHz, a ESP32 zostawia między transmisjami co najmniej
+0,6 ms, żeby slave zdążył ponownie uzbroić odbiór DMA.
+
+**Układ ramki** (4416 bajtów przy polu 48 × 27: 16 + 3888 + 512; to `frame_size` w YAML):
+
+| Pozycja | Bajtów | Zawartość |
+|---|---|---|
+| 0 | 4 | `SBG2` |
+| 4 | 2 | szerokość W i wysokość H pola w komórkach |
+| 6 | 2 | W i H z odwróconymi bitami (druga kontrola nagłówka) |
+| 8 | 1 | licznik ramek |
+| 9 | 2 | suma wszystkich bajtów pola, 16 bitów, młodszy bajt pierwszy |
+| 11 | 1 | flagi; bit 0 = suma jest obecna |
+| 12 | 4 | `5A A5 C3 3C` |
+| 16 | W × H × 3 | pole: wiersze od góry, komórki od lewej, R, G, B po jednym bajcie |
+| 16 + W × H × 3 | 512 | blok stanu `SBX1`: stan i format wejścia HDMI, tryb HDR, liczniki zaników, wersja firmware, wyjście konsoli, CRC16 |
+
+Rozmiar pola jest w każdym nagłówku, więc można go zmienić na ESP32 (`set grid_w`, `set grid_h`) bez ruszania
+konfiguracji BK7238. Bez sygnału wideo ESP32 wysyła ramkę bez pola (W = H = 0, 1128 bajtów), która niesie sam
+blok stanu: pięć razy na sekundę albo co 16 ms, gdy podłączony jest klient konsoli.
+
+**Odbiór.** Wątek na BK7238 czeka w odbiorze DMA na `frame_size` bajtów albo na narastające zbocze CS. Ramka jest
+używana tylko wtedy, gdy zgadzają się bajty znacznika, odwrócone rozmiary i suma bajtów; inaczej jest odrzucana
+i liczona (`częściowe` i `błędne` w linii logu `klatki:`), a taśma trzyma kolory do następnej ramki. Wątek pracuje
+powyżej zadań Wi-Fi: na ponowne uzbrojenie odbioru ma ok. 12 ms między ramkami, a gdy pracował poniżej nich,
+każde nadawanie Wi-Fi mogło kosztować klatkę. Pętla główna rozkłada potem pole na 28 sekcji taśmy
+(patrz [Kalibracja](#kalibracja)).
+
+**Kierunek zwrotny.** W tej samej transmisji BK7238 może odpowiedzieć linią MISO. Robi to tylko wtedy, gdy do portu
+konsoli podłączony jest klient: blok `SBD1` z najwyżej 1024 bajtami wejścia konsoli (komendy albo obraz firmware
+podczas aktualizacji). Oba kierunki wysyłają jedną porcję naraz i powtarzają ją w każdej ramce, aż druga strona
+potwierdzi jej numer. Dokładny format obu bloków jest w [`esp32/main/link.h`](esp32/main/link.h).
 
 ## Układ repozytorium
 
@@ -313,7 +356,7 @@ ekranie na wyświetlaczu zasilanym przez box i uruchamiaj skrypty z `tools/bench
 ### ESPHome (suwaki w Home Assistant)
 
 Tor koloru w BK7238: średnia komórek przy krawędzi (`depth`) → poziom czerni/bieli → balans bieli → gamma →
-nasycenie → doświetlenie ze środka → jasność → wygładzanie → dithering w czasie.
+nasycenie → doświetlenie ze środka i przygaszanie → jasność → wygładzanie → dithering w czasie.
 
 1. **Geometria taśmy** (YAML `layout:`): liczba sekcji na bok, `start_corner`, `direction`. Montaż wzorcowy,
    widok od tyłu TV:
@@ -329,6 +372,10 @@ nasycenie → doświetlenie ze środka → jasność → wygładzanie → dither
 6. **Wygładzanie:** „Wideo: wygładzanie” (0 = brak). ESP32 już filtruje szum, więc wystarczają małe wartości.
 7. **Doświetlenie ze środka:** „Wideo: doświetlenie ze środka” (0–40 %) dodaje światło z głębi obrazu, gdy
    krawędź jest dużo ciemniejsza niż wnętrze.
+8. **Przygaszanie przy ciemnym środku:** „Wideo: przygaszanie przy ciemnym środku” (0–100 %, w przykładowej
+   konfiguracji wyłączone) to przypadek odwrotny: gdy wnętrze jest ciemniejsze od krawędzi, sekcja traci taki
+   procent różnicy jasności, a kolor krawędzi zostaje. Przydaje się, gdy jasny, kontrastowy brzeg rozświetla
+   taśmę przy ciemnej reszcie ekranu; najpierw spróbuj większej głębokości próbkowania.
 
 Wartości używane na egzemplarzu wzorcowym: gamma 2,6, nasycenie 1,2–1,8, wygładzanie 0,3, balans bieli
 1,0 / 1,0 / 1,0, odstępy boków 1, doświetlenie ze środka 25 %. Suwaki są zapisywane we flash i przeżywają
