@@ -1,5 +1,5 @@
 """Ile satelity E1.31 kosztuja tasme TV: FPS wideo, zapisy tasmy, ramki uciete i czas wysylki, z przelacznikiem
-"Satelity (E1.31)" wlaczonym, wylaczonym i znow wlaczonym (na koniec zostaje wlaczony).
+"Satellites (E1.31)" wlaczonym, wylaczonym i znow wlaczonym (na koniec zostaje wlaczony).
 
 Czyta linie "klatki: ..." i "satelity: ..." z logu BK7238 (wymaga `log_frames: true`).
 
@@ -34,12 +34,12 @@ def measure(label):
     for t, text in bk.logs:
         if t < t0 + 2:
             continue
-        m = re.search(r"(\d+) częściowe, (\d+) zgubione.*wideo ([\d.]+) fps, taśma ([\d.]+) fps", text)
+        m = re.search(r"(\d+) partial, (\d+) dropped.*video ([\d.]+) fps, strip ([\d.]+) fps", text)
         if m:
             part.append((int(m.group(1)), int(m.group(2))))
             v.append(float(m.group(3)))
             s.append(float(m.group(4)))
-        m = re.search(r"satelity: (\d+) pakiet\S*, obsługa śr\. (\d+) us, max (\d+) us, błędy wysyłki (\d+)", text)
+        m = re.search(r"satellites: (\d+) packets, service avg (\d+) us, max (\d+) us, send errors (\d+)", text)
         if m:
             sat.append(tuple(int(x) for x in m.groups()))
     txt = (f"{label}: wideo {st.mean(v):.1f} fps, tasma {st.mean(s):.1f} zapisow/s, ramki uciete "
@@ -51,11 +51,11 @@ def measure(label):
 
 
 measure("satelity wlaczone")
-bk.set_switch("Satelity (E1.31)", False)
+bk.set_switch("Satellites (E1.31)", False)
 time.sleep(1)
 measure("satelity wylaczone")
-bk.set_switch("Satelity (E1.31)", True)
+bk.set_switch("Satellites (E1.31)", True)
 time.sleep(1)
 measure("satelity wlaczone ponownie")
-print("na koniec przelacznik satelitow:", bk.states.get("Satelity (E1.31)"), "| zerwan polaczenia:", bk.drops)
+print("na koniec przelacznik satelitow:", bk.states.get("Satellites (E1.31)"), "| zerwan polaczenia:", bk.drops)
 bk.close()

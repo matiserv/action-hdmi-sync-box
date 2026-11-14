@@ -122,8 +122,8 @@ def _validate_layout(value):
         )
         if not ok:
             raise cv.Invalid(
-                "Przy montazu 3-stronnym (bottom: 0) tasma zaczyna sie w bottom_left "
-                "(clockwise) albo bottom_right (counter_clockwise)."
+                "With a 3-sided mounting (bottom: 0) the strip starts at bottom_left "
+                "(clockwise) or bottom_right (counter_clockwise)."
             )
     return value
 
@@ -189,13 +189,13 @@ def _validate_address(value):
         return ""
     parts = value.split(".")
     if len(parts) != 4 or not all(p.isdigit() and 0 <= int(p) <= 255 for p in parts):
-        raise cv.Invalid("address: podaj IPv4 (np. 192.168.1.50) albo 'multicast'")
+        raise cv.Invalid("address: give an IPv4 address (e.g. 192.168.1.50) or 'multicast'")
     return value
 
 
 def _validate_wall(value):
     if not isinstance(value, dict) or len(value) != 1:
-        raise cv.Invalid("walls: kazdy wpis to jedna sciana z liczba diod, np. '- left: 16'")
+        raise cv.Invalid("walls: each entry is one wall with its LED count, e.g. '- left: 16'")
     ((wall, leds),) = value.items()
     return {cv.one_of(*WALLS, lower=True)(wall): cv.int_range(min=1, max=170)(leds)}
 
@@ -204,15 +204,15 @@ def _validate_satellite(config):
     walls = config.get(CONF_WALLS)
     if config[CONF_MODE] != "room":
         if walls:
-            raise cv.Invalid("walls: tylko dla mode: room")
+            raise cv.Invalid("walls: only for mode: room")
         return config
     if not walls:
-        raise cv.Invalid("mode: room wymaga listy walls (sciany w kolejnosci tasmy lampy, od pierwszej diody)")
+        raise cv.Invalid("mode: room needs a walls list (walls in the order of the lamp strip, from its first LED)")
     idx = [WALLS.index(next(iter(w))) for w in walls]
     # kierunek na kazdej scianie wynika z nastepnej sciany na liscie (dla ostatniej: z poprzedniej)
     steps = [(b - a) % 4 for a, b in zip(idx, idx[1:])]
     if any(st not in (1, 3) for st in steps):
-        raise cv.Invalid("walls: kolejne wpisy musza byc sasiednimi scianami (np. back, left, front, right)")
+        raise cv.Invalid("walls: consecutive entries must be adjacent walls (e.g. back, left, front, right)")
     steps = steps + [steps[-1] if steps else 1]
     segs = []
     for w, i, st in zip(walls, idx, steps):
@@ -220,7 +220,7 @@ def _validate_satellite(config):
         segs.append((float(i), float(i + 1), leds) if st == 1 else (float(i + 1), float(i), leds))
     total = sum(sg[2] for sg in segs)
     if total > 170:
-        raise cv.Invalid("walls: razem najwyzej 170 diod (jeden universe)")
+        raise cv.Invalid("walls: at most 170 LEDs in total (one universe)")
     config = dict(config)
     config[CONF_LEDS] = total
     config["_segments"] = segs

@@ -2,7 +2,7 @@
 
 Dla kazdego wzoru: pole 48x27 odczytane z ESP32 (konsola) przechodzi przez model toru BK7238 w Pythonie
 (prostokaty sekcji, tablica poziomy/balans/gamma, doswietlenie, nasycenie), a wynik jest porownywany z kolorami
-sekcji, ktore BK7238 wypisuje w logu (przelacznik "Diagnostyka: log sekcji"). Kazdy wzor idzie dwa razy:
+sekcji, ktore BK7238 wypisuje w logu (przelacznik "Diagnostics: section log"). Kazdy wzor idzie dwa razy:
 z doswietleniem wylaczonym (0 %) i wlaczonym (domyslnie 25 %).
 
 Wymaga: server.py, strony testowej na ekranie za sync boxem, ESP32 na porcie szeregowym, BK7238 w sieci.
@@ -25,12 +25,12 @@ ONLY = sys.argv[5] if len(sys.argv) > 5 else ""          # prefiks nazwy testu, 
 VERBOSE = len(sys.argv) > 6                              # dowolny szosty argument: wypisz wszystkie sekcje
 
 # ---------------------------------------------------------------- BK7238 przez API ESPHome (bkapi.py)
-SEC_RE = re.compile(r"sekcje L:((?:[0-9A-F]{6} )*)G:((?:[0-9A-F]{6} )*)P:((?:[0-9A-F]{6} )*)\s*kadr x (\d+)\.\.(\d+) y (\d+)\.\.(\d+) srodek (\d+)%")
+SEC_RE = re.compile(r"sections L:((?:[0-9A-F]{6} )*)T:((?:[0-9A-F]{6} )*)R:((?:[0-9A-F]{6} )*)\s*crop x (\d+)\.\.(\d+) y (\d+)\.\.(\d+) inner (\d+)%")
 
 
 def bk_sections():
     """Kolory sekcji z kolejnej linii logu: ({'L': [...], 'G': [...], 'P': [...]}, kadr, procent)."""
-    line = bk.wait_log("sekcje L:", 4.0)
+    line = bk.wait_log("sections L:", 4.0)
     m = SEC_RE.search(line) if line else None
     if not m:
         return None
@@ -84,7 +84,7 @@ def read_field():
 
 def measure(pattern, mix_pct):
     """Ustaw wzor i doswietlenie, poczekaj na ustalenie, oddaj (sekcje BK, model, kadr)."""
-    bk.set_number("Wideo: doswietlenie ze srodka", mix_pct)
+    bk.set_number("Video: inner fill", mix_pct)
     post(pattern)
     time.sleep(2.6)                       # wygladzanie ESP32 i BK7238, narastanie doswietlenia (0,2 s)
     field = None
@@ -139,7 +139,7 @@ TESTS = [
 def main():
     if not _m.page_open():
         print("UWAGA: strona testowa nie odpytuje serwera - wyniki beda bez znaczenia")
-    bk.set_switch("Diagnostyka: log sekcji", True)
+    bk.set_switch("Diagnostics: section log", True)
     time.sleep(1.0)
     read_cfg(bk.states)
     print("Tor BK7238:", CFG)
@@ -157,7 +157,7 @@ def main():
                 if not bk.connected():          # restart BK7238: polacz ponownie i wlacz log sekcji
                     time.sleep(15)
                     bk.reconnect()
-                    bk.set_switch("Diagnostyka: log sekcji", True)
+                    bk.set_switch("Diagnostics: section log", True)
                 continue
             off, m_off, crop, tol0 = r0
             on, m_on, _, tol1 = r1
@@ -195,8 +195,8 @@ def main():
                     ok = False
                 prev_left = cur
     finally:
-        bk.set_number("Wideo: doswietlenie ze srodka", MIX)
-        bk.set_switch("Diagnostyka: log sekcji", False)
+        bk.set_number("Video: inner fill", MIX)
+        bk.set_switch("Diagnostics: section log", False)
         post({"mode": "idle"})
         time.sleep(0.5)
     if bk.drops:

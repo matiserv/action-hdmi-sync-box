@@ -9,13 +9,13 @@
 #  - sceny = efekty ESPHome, kolor statyczny i malowanie sekcji z Home Assistant
 #  - przycisk P26: krotko = wlacz/wylacz, 3 s = reset ustawien (w tym Wi-Fi)
 #  - minutnik wylaczenia, liczniki FPS, czujnik sygnalu HDMI
-#  - synchronizacja HDMI to EFEKT swiatla "Synchronizacja HDMI" (jak sceny); ESPHome pamieta efekt
+#  - synchronizacja HDMI to EFEKT swiatla "HDMI sync" (jak sceny); ESPHome pamieta efekt
 #    we flashu, wiec po zaniku zasilania box wraca do synchronizacji; bez sygnalu tasma jest czarna
 #  - tasma odswiezana co 1 s nawet bez zmian (uklady po zaklóceniu nie trzymaja smieci)
 #  - kalibracja kolorow obrazu w HA: poziomy czerni/bieli, balans bieli R/G/B, gamma, nasycenie
 #  - wejscie E1.31 (sACN) i WLED UDP: efekty "E1.31" / "WLED" -> LedFx, Hyperion, WLED, xLights
 #  - satelity: box wysyla kolory tasmy po E1.31 do innych swiatel (WLED, inne boxy z ESPHome);
-#    dla zarowek bez E1.31 jest text_sensor "Kolor sredni" (#RRGGBB) do automatyzacji w HA
+#    dla zarowek bez E1.31 jest text_sensor "Average color" (#RRGGBB) do automatyzacji w HA
 #
 # Hasla i klucze sa w secrets.yaml (wzor: secrets.yaml.example) - nie wpisuj ich tutaj.
 
@@ -67,6 +67,26 @@ ota:
 
 web_server:
   port: 80
+  version: 3
+  sorting_groups:
+    - id: grp_control
+      name: "Control"
+      sorting_weight: 10
+    - id: grp_picture
+      name: "Picture: personal tuning"
+      sorting_weight: 20
+    - id: grp_color
+      name: "Strip color calibration"
+      sorting_weight: 30
+    - id: grp_mounting
+      name: "Mounting calibration"
+      sorting_weight: 40
+    - id: grp_status
+      name: "Status"
+      sorting_weight: 50
+    - id: grp_service
+      name: "Service"
+      sorting_weight: 60
 
 # ------------------------------------------------------------------ wejscie z sieci
 # Odbior E1.31/sACN (port 5568) - wlacz efekt "E1.31" na swietle. Universe 1, 28 sekcji x RGB = 84 kanaly.
@@ -94,7 +114,10 @@ syncbox:
     direction: counter_clockwise
   refresh_interval: 1s      # ponowne wyslanie bufora, gdy nic sie nie zmienilo (0s = wylacz)
   average_color:
-    name: "Kolor sredni"    # #RRGGBB, max 2 razy na sekunde; do automatyzacji HA dla zwyklych zarowek
+    name: "Average color"    # #RRGGBB, max 2 razy na sekunde; do automatyzacji HA dla zwyklych zarowek
+    web_server:
+      sorting_group_id: grp_status
+      sorting_weight: 60
   # Satelity: inne swiatla odbierajace E1.31 (WLED: Sync -> E1.31, albo drugi box z ESPHome z efektem e131).
   # mode: average (sredni kolor), mirror (kopia sekcji 1:1), left/top/right/bottom (sredni kolor boku),
   #       full (cale pole, np. 48x27 = 1296 px w kolejnych universach od universe)
@@ -132,10 +155,10 @@ syncbox:
     pixel_order: RGB
     depth: 2                # ile komorek siatki od krawedzi brac do sredniej (3 = 20% ekranu = "splaszczone" kolory)
     smoothing: 0.2          # 0 = bez wygladzania, 0.9 = bardzo plynnie (przy interpolacji wystarczy malo)
-    inner_mix: 25%          # doswietlenie ze srodka obrazu (wartosc startowa; w HA suwak "Wideo: doswietlenie ze srodka")
+    inner_mix: 25%          # doswietlenie ze srodka obrazu (wartosc startowa; w HA suwak "Video: inner fill")
     saturation: 1.5
     brightness: 100%
-    # kalibracja obrazu (wartosci startowe; w HA sa suwaki "Wideo: ...", ktore je nadpisuja)
+    # kalibracja obrazu (wartosci startowe; w HA sa suwaki "Video: ..." i "Color: ...", ktore je nadpisuja)
     black_level: 0          # wartosc z klatki uznawana za czern (podnies, gdy czern jest szara)
     white_level: 255        # wartosc uznawana za biel (obniz, gdy biel jest przygaszona)
     white_balance:
@@ -149,15 +172,27 @@ syncbox:
     log_frames: true        # na czas uruchamiania: co 60 klatek loguje pierwsze bajty
     interpolation: true     # plynne przejscia ~60 Hz miedzy klatkami z wolnego zrodla
   video_fps:
-    name: "FPS wideo"
+    name: "Video FPS"
+    web_server:
+      sorting_group_id: grp_status
+      sorting_weight: 40
   led_fps:
-    name: "FPS tasmy"
+    name: "Strip FPS"
+    web_server:
+      sorting_group_id: grp_status
+      sorting_weight: 50
   # Stan wejscia HDMI z ESP32 (firmware v14.4+): format i tryb HDR, licznik zanikow sygnalu.
   hdmi_input:
-    name: "HDMI: wejscie"
+    name: "HDMI input"
+    web_server:
+      sorting_group_id: grp_status
+      sorting_weight: 20
     icon: mdi:video-input-hdmi
   hdmi_dropouts:
-    name: "HDMI: zaniki"
+    name: "HDMI dropouts"
+    web_server:
+      sorting_group_id: grp_status
+      sorting_weight: 30
     icon: mdi:alert-circle-outline
   # Konsola ESP32 po sieci (komendy, strojenie, wgrywanie firmware ESP32 bez kabla): tcp://<adres boxa>:2323.
   # Pierwsza linia wyslana przez klienta to haslo.
@@ -165,18 +200,24 @@ syncbox:
     port: 2323
     password: !secret console_password
   hdmi_signal:
-    name: "Sygnal HDMI"
+    name: "HDMI signal"
+    web_server:
+      sorting_group_id: grp_status
+      sorting_weight: 10
 
 light:
   - platform: syncbox
     id: strip
-    name: "Podswietlenie TV"
+    name: "TV backlight"
+    web_server:
+      sorting_group_id: grp_control
+      sorting_weight: 10
     default_transition_length: 0s
     gamma_correct: 1.0
     restore_mode: RESTORE_DEFAULT_OFF
     effects:
       - syncbox_video:
-          name: "Synchronizacja HDMI"
+          name: "HDMI sync"
       - e131:
           name: "E1.31"
           universe: 1
@@ -184,15 +225,15 @@ light:
       - wled:
           name: "WLED"
       - addressable_rainbow:
-          name: "Tecza"
+          name: "Rainbow"
           speed: 10
           width: 28
       - addressable_rainbow:
-          name: "Tecza szybka"
+          name: "Rainbow fast"
           speed: 40
           width: 14
       - addressable_color_wipe:
-          name: "Przeplyw kolorow"
+          name: "Color wipe"
           add_led_interval: 60ms
           colors:
             - red: 100%
@@ -212,29 +253,29 @@ light:
               blue: 0%
               num_leds: 7
       - addressable_scan:
-          name: "Skaner"
+          name: "Scan"
           move_interval: 40ms
           scan_width: 3
       - addressable_twinkle:
-          name: "Migotanie"
+          name: "Twinkle"
           twinkle_probability: 8%
           progress_interval: 4ms
       - addressable_random_twinkle:
-          name: "Losowe migotanie"
+          name: "Random twinkle"
           twinkle_probability: 8%
           progress_interval: 32ms
       - addressable_fireworks:
-          name: "Fajerwerki"
+          name: "Fireworks"
           update_interval: 32ms
           spark_probability: 12%
           use_random_color: true
           fade_out_rate: 110
       - addressable_flicker:
-          name: "Plomien"
+          name: "Flicker"
           update_interval: 16ms
           intensity: 8%
       - addressable_lambda:
-          name: "Oddychanie"
+          name: "Breathing"
           update_interval: 16ms
           lambda: |-
             static float phase = 0.0f;
@@ -243,7 +284,7 @@ light:
             Color c = current_color;
             it.all() = Color((uint8_t) (c.r * level), (uint8_t) (c.g * level), (uint8_t) (c.b * level));
       - addressable_lambda:
-          name: "Fala"
+          name: "Wave"
           update_interval: 30ms
           lambda: |-
             static uint8_t pos = 0;
@@ -261,7 +302,10 @@ light:
 # komponent startowal z wartosciami z sekcji `video:`, a suwak w HA pokazywal co innego).
 number:
   - platform: template
-    name: "Wideo: doswietlenie ze srodka"
+    name: "Video: inner fill"
+    web_server:
+      sorting_group_id: grp_picture
+      sorting_weight: 50
     id: video_inner_mix
     icon: mdi:blur-radial
     optimistic: true
@@ -274,7 +318,10 @@ number:
     on_value:
       - lambda: id(box).set_inner_mix(x / 100.0f);
   - platform: template
-    name: "Wideo: przygaszanie przy ciemnym srodku"
+    name: "Video: dim on dark center"
+    web_server:
+      sorting_group_id: grp_picture
+      sorting_weight: 60
     id: video_inner_dim
     icon: mdi:brightness-4
     optimistic: true
@@ -287,7 +334,10 @@ number:
     on_value:
       - lambda: id(box).set_inner_dim(x / 100.0f);   # 0 = wylaczone, 100 = tasma nie jasniejsza niz obraz w glebi
   - platform: template
-    name: "Wideo: balans R"
+    name: "Color: white balance R"
+    web_server:
+      sorting_group_id: grp_color
+      sorting_weight: 10
     id: wb_r
     optimistic: true
     restore_value: true
@@ -298,7 +348,10 @@ number:
     on_value:
       - lambda: id(box).set_wb_channel(0, x);
   - platform: template
-    name: "Wideo: balans G"
+    name: "Color: white balance G"
+    web_server:
+      sorting_group_id: grp_color
+      sorting_weight: 20
     id: wb_g
     optimistic: true
     restore_value: true
@@ -309,7 +362,10 @@ number:
     on_value:
       - lambda: id(box).set_wb_channel(1, x);
   - platform: template
-    name: "Wideo: balans B"
+    name: "Color: white balance B"
+    web_server:
+      sorting_group_id: grp_color
+      sorting_weight: 30
     id: wb_b
     optimistic: true
     restore_value: true
@@ -320,7 +376,10 @@ number:
     on_value:
       - lambda: id(box).set_wb_channel(2, x);
   - platform: template
-    name: "Wideo: gamma"
+    name: "Color: gamma"
+    web_server:
+      sorting_group_id: grp_color
+      sorting_weight: 40
     id: video_gamma
     optimistic: true
     restore_value: true
@@ -331,7 +390,10 @@ number:
     on_value:
       - lambda: id(box).set_video_gamma(x);
   - platform: template
-    name: "Wideo: poziom czerni"
+    name: "Color: black level"
+    web_server:
+      sorting_group_id: grp_color
+      sorting_weight: 60
     id: video_black
     optimistic: true
     restore_value: true
@@ -342,7 +404,10 @@ number:
     on_value:
       - lambda: id(box).set_video_black(x);
   - platform: template
-    name: "Wideo: poziom bieli"
+    name: "Color: white level"
+    web_server:
+      sorting_group_id: grp_color
+      sorting_weight: 70
     id: video_white
     optimistic: true
     restore_value: true
@@ -353,7 +418,10 @@ number:
     on_value:
       - lambda: id(box).set_video_white(x);
   - platform: template
-    name: "Wideo: jasnosc"
+    name: "Video: brightness"
+    web_server:
+      sorting_group_id: grp_picture
+      sorting_weight: 10
     id: video_brightness
     optimistic: true
     restore_value: true
@@ -365,7 +433,10 @@ number:
     on_value:
       - lambda: id(box).set_video_brightness(x / 100.0f);
   - platform: template
-    name: "Wideo: nasycenie"
+    name: "Video: saturation"
+    web_server:
+      sorting_group_id: grp_picture
+      sorting_weight: 20
     id: video_saturation
     optimistic: true
     restore_value: true
@@ -376,7 +447,10 @@ number:
     on_value:
       - lambda: id(box).set_saturation(x);
   - platform: template
-    name: "Wideo: wygladzanie"
+    name: "Video: smoothing"
+    web_server:
+      sorting_group_id: grp_picture
+      sorting_weight: 30
     id: video_smoothing
     optimistic: true
     restore_value: true
@@ -387,7 +461,10 @@ number:
     on_value:
       - lambda: id(box).set_smoothing(x);
   - platform: template
-    name: "Wideo: glebokosc probkowania"
+    name: "Video: sampling depth"
+    web_server:
+      sorting_group_id: grp_picture
+      sorting_weight: 40
     id: video_depth
     optimistic: true
     restore_value: true
@@ -397,8 +474,119 @@ number:
     step: 1
     on_value:
       - lambda: id(box).set_depth((uint8_t) x);
+  # Domieszki kolorow tasmy (komponent v17.4): ile swiatla jednego kanalu dodac za inny kolor z obrazu. Biel i szarosci
+  # sie nie zmieniaja. Np. "G do niebieskiego" rozjasnia i odbarwia niebieski z tasmy, "R do zielonego" ociepla zielen i zolty.
   - platform: template
-    name: "Kalibracja: odstep lewy bok"
+    name: "Color: mix G into red"
+    web_server:
+      sorting_group_id: grp_color
+      sorting_weight: 120
+    icon: mdi:palette
+    optimistic: true
+    restore_value: true
+    initial_value: 0
+    min_value: 0
+    max_value: 40
+    step: 1
+    unit_of_measurement: "%"
+    on_value:
+      - lambda: id(box).set_color_mix(1, 0, x / 100.0f);
+  - platform: template
+    name: "Color: mix B into red"
+    web_server:
+      sorting_group_id: grp_color
+      sorting_weight: 130
+    icon: mdi:palette
+    optimistic: true
+    restore_value: true
+    initial_value: 0
+    min_value: 0
+    max_value: 40
+    step: 1
+    unit_of_measurement: "%"
+    on_value:
+      - lambda: id(box).set_color_mix(2, 0, x / 100.0f);
+  - platform: template
+    name: "Color: mix R into green"
+    web_server:
+      sorting_group_id: grp_color
+      sorting_weight: 100
+    icon: mdi:palette
+    optimistic: true
+    restore_value: true
+    initial_value: 0
+    min_value: 0
+    max_value: 40
+    step: 1
+    unit_of_measurement: "%"
+    on_value:
+      - lambda: id(box).set_color_mix(0, 1, x / 100.0f);
+  - platform: template
+    name: "Color: mix B into green"
+    web_server:
+      sorting_group_id: grp_color
+      sorting_weight: 110
+    icon: mdi:palette
+    optimistic: true
+    restore_value: true
+    initial_value: 0
+    min_value: 0
+    max_value: 40
+    step: 1
+    unit_of_measurement: "%"
+    on_value:
+      - lambda: id(box).set_color_mix(2, 1, x / 100.0f);
+  - platform: template
+    name: "Color: mix R into blue"
+    web_server:
+      sorting_group_id: grp_color
+      sorting_weight: 90
+    icon: mdi:palette
+    optimistic: true
+    restore_value: true
+    initial_value: 0
+    min_value: 0
+    max_value: 40
+    step: 1
+    unit_of_measurement: "%"
+    on_value:
+      - lambda: id(box).set_color_mix(0, 2, x / 100.0f);
+  - platform: template
+    name: "Color: mix G into blue"
+    web_server:
+      sorting_group_id: grp_color
+      sorting_weight: 80
+    icon: mdi:palette
+    optimistic: true
+    restore_value: true
+    initial_value: 0
+    min_value: 0
+    max_value: 40
+    step: 1
+    unit_of_measurement: "%"
+    on_value:
+      - lambda: id(box).set_color_mix(1, 2, x / 100.0f);
+  # Mnoznik gammy samego niebieskiego (1.0 = jak "Color: gamma"). Wiekszy = niebieski narasta wolniej: ciemne i srednie
+  # poziomy slabsze, pelny niebieski bez zmian.
+  - platform: template
+    name: "Color: blue gamma"
+    web_server:
+      sorting_group_id: grp_color
+      sorting_weight: 50
+    icon: mdi:chart-bell-curve-cumulative
+    optimistic: true
+    restore_value: true
+    initial_value: 1.0
+    min_value: 0.6
+    max_value: 2.5
+    step: 0.05
+    on_value:
+      - lambda: id(box).set_gamma_channel(2, x);
+  - platform: template
+    name: "Mounting: left side offset"
+    web_server:
+      sorting_group_id: grp_mounting
+      sorting_weight: 10
     optimistic: true
     restore_value: true
     initial_value: 0
@@ -408,7 +596,10 @@ number:
     on_value:
       - lambda: id(box).set_side_offset(syncbox::SIDE_LEFT, (uint8_t) x);
   - platform: template
-    name: "Kalibracja: odstep gorny bok"
+    name: "Mounting: top side offset"
+    web_server:
+      sorting_group_id: grp_mounting
+      sorting_weight: 20
     optimistic: true
     restore_value: true
     initial_value: 0
@@ -418,7 +609,10 @@ number:
     on_value:
       - lambda: id(box).set_side_offset(syncbox::SIDE_TOP, (uint8_t) x);
   - platform: template
-    name: "Kalibracja: odstep prawy bok"
+    name: "Mounting: right side offset"
+    web_server:
+      sorting_group_id: grp_mounting
+      sorting_weight: 30
     optimistic: true
     restore_value: true
     initial_value: 0
@@ -428,7 +622,10 @@ number:
     on_value:
       - lambda: id(box).set_side_offset(syncbox::SIDE_RIGHT, (uint8_t) x);
   - platform: template
-    name: "Minutnik wylaczenia"
+    name: "Sleep timer"
+    web_server:
+      sorting_group_id: grp_control
+      sorting_weight: 30
     id: countdown_minutes
     optimistic: true
     initial_value: 0
@@ -448,7 +645,10 @@ number:
 
 switch:
   - platform: template
-    name: "Diagnostyka: log sekcji"
+    name: "Diagnostics: section log"
+    web_server:
+      sorting_group_id: grp_service
+      sorting_weight: 10
     icon: mdi:text-box-search-outline
     entity_category: diagnostic
     optimistic: true
@@ -458,7 +658,10 @@ switch:
     turn_off_action:
       - lambda: id(box).set_log_sections(false);
   - platform: template
-    name: "Satelity (E1.31)"
+    name: "Satellites (E1.31)"
+    web_server:
+      sorting_group_id: grp_control
+      sorting_weight: 20
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON
     turn_on_action:
@@ -466,7 +669,10 @@ switch:
     turn_off_action:
       - lambda: id(box).set_satellites_enabled(false);
   - platform: template
-    name: "Wideo: wykrywanie czarnych pasow"
+    name: "Video: letterbox detection"
+    web_server:
+      sorting_group_id: grp_picture
+      sorting_weight: 70
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON
     turn_on_action:
@@ -474,7 +680,10 @@ switch:
     turn_off_action:
       - lambda: id(box).set_letterbox_detection(false);
   - platform: template
-    name: "Wideo: interpolacja klatek"
+    name: "Video: frame interpolation"
+    web_server:
+      sorting_group_id: grp_picture
+      sorting_weight: 80
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON
     turn_on_action:
@@ -482,7 +691,10 @@ switch:
     turn_off_action:
       - lambda: id(box).set_interpolation(false);
   - platform: template
-    name: "Wideo: gas tasme bez sygnalu"
+    name: "Video: strip off without signal"
+    web_server:
+      sorting_group_id: grp_picture
+      sorting_weight: 90
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON
     turn_on_action:
@@ -506,7 +718,10 @@ script:
 binary_sensor:
   - platform: gpio
     id: user_button
-    name: "Przycisk"
+    name: "Button"
+    web_server:
+      sorting_group_id: grp_status
+      sorting_weight: 70
     pin:
       number: P26
       mode:
@@ -528,8 +743,14 @@ binary_sensor:
 button:
   - platform: factory_reset
     id: do_factory_reset
-    name: "Reset ustawien (w tym Wi-Fi)"
+    name: "Factory reset (incl. Wi-Fi)"
+    web_server:
+      sorting_group_id: grp_service
+      sorting_weight: 30
     entity_category: config
   - platform: restart
     name: "Restart"
+    web_server:
+      sorting_group_id: grp_service
+      sorting_weight: 20
     entity_category: config

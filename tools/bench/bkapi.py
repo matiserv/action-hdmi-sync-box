@@ -7,9 +7,9 @@ Klucz szyfrowania API jest czytany z pliku YAML z konfiguracja urzadzenia (pole 
 nie trafia do wiersza polecen ani do wynikow.
 
     bk = Bk("192.168.1.50", "sciezka/do/konfiguracji.yaml")
-    bk.set_number("Wideo: doswietlenie ze srodka", 25)
-    bk.set_switch("Diagnostyka: log sekcji", True)
-    line = bk.wait_log("sekcje L:", 3.0)
+    bk.set_number("Video: inner fill", 25)
+    bk.set_switch("Diagnostics: section log", True)
+    line = bk.wait_log("sections L:", 3.0)
     bk.close()
 """
 import asyncio

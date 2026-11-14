@@ -17,9 +17,9 @@ from bkmodel import CFG, model, read_cfg
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 host, yaml_path = sys.argv[1:3]
 vals = [float(x) for x in (sys.argv[3] if len(sys.argv) > 3 and not sys.argv[3].startswith("--") else "0,50,100").split(",")]
-DIM = "Wideo: przygaszanie przy ciemnym srodku"
-MIX = "Wideo: doswietlenie ze srodka"
-SEC_RE = re.compile(r"sekcje L:((?:[0-9A-F]{6} )*)G:((?:[0-9A-F]{6} )*)P:((?:[0-9A-F]{6} )*)\s*kadr x (\d+)\.\.(\d+) y (\d+)\.\.(\d+)")
+DIM = "Video: dim on dark center"
+MIX = "Video: inner fill"
+SEC_RE = re.compile(r"sections L:((?:[0-9A-F]{6} )*)T:((?:[0-9A-F]{6} )*)R:((?:[0-9A-F]{6} )*)\s*crop x (\d+)\.\.(\d+) y (\d+)\.\.(\d+)")
 bk = Bk(host, yaml_path)
 time.sleep(4)
 read_cfg(bk.states)
@@ -53,11 +53,11 @@ def grab():
     return pattern_field() if PATTERN else esp.frames(1)[0]
 
 
-bk.set_switch("Diagnostyka: log sekcji", True)
+bk.set_switch("Diagnostics: section log", True)
 
 
 def sections():
-    line = bk.wait_log("sekcje L:", 4.0)
+    line = bk.wait_log("sections L:", 4.0)
     m = SEC_RE.search(line) if line else None
     if not m:
         return None, None
@@ -91,7 +91,7 @@ try:
               f"{sum(d > 4 for d in diffs)}/{len(diffs)} | jasnosc tasmy srednio {st.mean(bright):.0f} (bez przygaszania wg modelu "
               f"{st.mean(bright0):.0f}) | ruch obrazu miedzy odczytami {move}")
 finally:
-    bk.set_switch("Diagnostyka: log sekcji", False)
+    bk.set_switch("Diagnostics: section log", False)
     if PATTERN:
         esp.cmd("pattern 0", wait=0.5)
     if before is not None:

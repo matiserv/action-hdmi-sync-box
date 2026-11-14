@@ -18,9 +18,9 @@ from hdrwin import HdrWindow, describe, find_display, srgb_to_hdr10  # noqa: E40
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 host, yaml_path, which = sys.argv[2:5]
 vals = [float(x) for x in (sys.argv[5] if len(sys.argv) > 5 else "0,50,100").split(",")]
-DIM = "Wideo: przygaszanie przy ciemnym srodku"
-MIX = "Wideo: doswietlenie ze srodka"
-SEC_RE = re.compile(r"sekcje L:((?:[0-9A-F]{6} )*)G:((?:[0-9A-F]{6} )*)P:((?:[0-9A-F]{6} )*)\s*kadr x (\d+)\.\.(\d+) y (\d+)\.\.(\d+)")
+DIM = "Video: dim on dark center"
+MIX = "Video: inner fill"
+SEC_RE = re.compile(r"sections L:((?:[0-9A-F]{6} )*)T:((?:[0-9A-F]{6} )*)R:((?:[0-9A-F]{6} )*)\s*crop x (\d+)\.\.(\d+) y (\d+)\.\.(\d+)")
 W, H = 48, 27
 
 
@@ -48,14 +48,14 @@ mix = float(bk.states.get(MIX) or 0) / 100.0
 print(f"ustawienia: glebokosc {CFG['depth']}, nasycenie {CFG['sat']}, gamma {CFG['gamma']}, doswietlenie {mix * 100:.0f} %, "
       f"przygaszanie przed testem {before}")
 esp = Esp("tcp://" + host + ":2323")
-bk.set_switch("Diagnostyka: log sekcji", True)
+bk.set_switch("Diagnostics: section log", True)
 hdr = bool(disp["hdr_enabled"])
 conv = (lambda c: srgb_to_hdr10(c, 203.0)) if hdr else (lambda c: tuple(round(v * 1023 / 255) for v in c))
 win = HdrWindow(disp, hdr=hdr)
 
 
 def sections():
-    line = bk.wait_log("sekcje L:", 4.0)
+    line = bk.wait_log("sections L:", 4.0)
     m = SEC_RE.search(line) if line else None
     if not m:
         return None, None
@@ -88,7 +88,7 @@ try:
                   f"{'%02X%02X%02X' % mid} | tasma-model: max {max(diffs)}, srednio {st.mean(diffs):.1f} | kadr {crop}")
 finally:
     win.close()
-    bk.set_switch("Diagnostyka: log sekcji", False)
+    bk.set_switch("Diagnostics: section log", False)
     if before is not None:
         bk.set_number(DIM, float(before))
     time.sleep(1)

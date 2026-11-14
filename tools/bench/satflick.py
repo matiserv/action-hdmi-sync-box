@@ -15,11 +15,11 @@ host, yaml_path = sys.argv[1:3]
 SECS = float(sys.argv[3]) if len(sys.argv) > 3 else 40
 bk = Bk(host, yaml_path)
 time.sleep(4)
-SW = "Satelity (E1.31)"
+SW = "Satellites (E1.31)"
 before = bk.states.get(SW)
 print("przelacznik przed pomiarem:", before)
-RE = re.compile(r"klatki: (\d+) pełne, (\d+) częściowe, (\d+) zgubione, (\d+) błędne; wideo ([\d.]+) fps, taśma ([\d.]+) fps")
-RS = re.compile(r"satelity: (\d+) pakiet\S*, obsługa śr\. (\d+) us, max (\d+) us, błędy wysyłki (\d+)")
+RE = re.compile(r"frames: (\d+) ok, (\d+) partial, (\d+) dropped, (\d+) bad; video ([\d.]+) fps, strip ([\d.]+) fps")
+RS = re.compile(r"satellites: (\d+) packets, service avg (\d+) us, max (\d+) us, send errors (\d+)")
 
 
 def phase(label, on):

@@ -28,21 +28,21 @@ PATCHES = [("czern", (0, 0, 0)), ("biel", (255, 255, 255)), ("szary 128", (128, 
 if len(sys.argv) > 7:
     want = [x.strip() for x in sys.argv[7].split(",")]
     PATCHES = [p for n in want for p in PATCHES if p[0] == n]
-NEUTRAL = {"Wideo: doswietlenie ze srodka": 0.0, "Wideo: przygaszanie przy ciemnym srodku": 0.0, "Wideo: nasycenie": 1.0}
-SEC_RE = re.compile(r"sekcje L:((?:[0-9A-F]{6} )*)G:((?:[0-9A-F]{6} )*)P:((?:[0-9A-F]{6} )*)")
+NEUTRAL = {"Video: inner fill": 0.0, "Video: dim on dark center": 0.0, "Video: saturation": 1.0}
+SEC_RE = re.compile(r"sections L:((?:[0-9A-F]{6} )*)T:((?:[0-9A-F]{6} )*)R:((?:[0-9A-F]{6} )*)")
 
 disp = find_display(which)
 print("wyswietlacz:", describe(disp))
 bk = Bk(host, yaml_path)
 time.sleep(4)
 before = {k: bk.states.get(k) for k in NEUTRAL}
-keep = {k: bk.states.get(k) for k in ("Wideo: balans R", "Wideo: balans G", "Wideo: balans B", "Wideo: gamma", "Wideo: jasnosc",
-                                      "Wideo: poziom czerni", "Wideo: poziom bieli", "Wideo: glebokosc probkowania")}
-print("ustawienia tasmy w czasie pokazu:", ", ".join(f"{k.replace('Wideo: ', '')} {v}" for k, v in keep.items()))
+keep = {k: bk.states.get(k) for k in ("Color: white balance R", "Color: white balance G", "Color: white balance B", "Color: gamma", "Video: brightness",
+                                      "Color: black level", "Color: white level", "Video: sampling depth")}
+print("ustawienia tasmy w czasie pokazu:", ", ".join(f"{k.split(': ', 1)[-1]} {v}" for k, v in keep.items()))
 for k, v in NEUTRAL.items():
     if before[k] is not None:
         bk.set_number(k, v)
-bk.set_switch("Diagnostyka: log sekcji", True)
+bk.set_switch("Diagnostics: section log", True)
 hdr = bool(disp["hdr_enabled"])
 conv = (lambda c: srgb_to_hdr10(c, 203.0)) if hdr else (lambda c: tuple(round(v * 1023 / 255) for v in c))
 win = HdrWindow(disp, hdr=hdr)
@@ -53,7 +53,7 @@ try:
             t0 = time.time()
             win.solid(conv(rgb))
             win.hold(min(2.5, SECS * 0.5))
-            line = bk.wait_log("sekcje L:", 3.0)
+            line = bk.wait_log("sections L:", 3.0)
             m = SEC_RE.search(line or "")
             strip = None
             if m:
@@ -65,12 +65,12 @@ try:
             print(f"{rows[-1]['start']}-{rows[-1]['koniec']}  {name:10s} ekran {rgb}  -> tasma (srednia sekcji) {strip}", flush=True)
 finally:
     win.close()
-    bk.set_switch("Diagnostyka: log sekcji", False)
+    bk.set_switch("Diagnostics: section log", False)
     for k, v in before.items():
         if v is not None:
             bk.set_number(k, float(v))
     time.sleep(1)
-    print("przywrocone:", {k.replace("Wideo: ", ""): bk.states.get(k) for k in NEUTRAL})
+    print("przywrocone:", {k.split(": ", 1)[-1]: bk.states.get(k) for k in NEUTRAL})
     bk.close()
 if OUT:
     json.dump({"hdr": hdr, "ustawienia": keep, "plansze": rows}, open(OUT, "w", encoding="utf-8"), ensure_ascii=False, indent=1)

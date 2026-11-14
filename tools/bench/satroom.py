@@ -1,10 +1,10 @@
 """Satelita "obwod pokoju" (mode: room): czy BK7238 rozklada kolory krawedzi ekranu po scianach tak, jak wynika z YAML.
 
-Wlacza na kilka sekund przelacznik "Diagnostyka: log sekcji" i czyta z logu BK trzy linie z tej samej ramki:
-  sat-we   kolory sekcji tasmy TV (L od dolu, G od lewej, P od gory)
-  sat-cel  kolor docelowy kazdej diody lampy (przed wygladzaniem w czasie)
-  sat-wy   bajty wyslane do lampy (po wygladzaniu, jasnosci i kodowaniu gamma)
-Kolory docelowe sa liczone niezaleznie w Pythonie z sat-we i porownywane z sat-cel. Dla sat-wy podawane jest, jak
+Wlacza na kilka sekund przelacznik "Diagnostics: section log" i czyta z logu BK trzy linie z tej samej ramki:
+  sat-in      kolory sekcji tasmy TV (L od dolu, T od lewej, R od gory)
+  sat-target  kolor docelowy kazdej diody lampy (przed wygladzaniem w czasie)
+  sat-out     bajty wyslane do lampy (po wygladzaniu, jasnosci i kodowaniu gamma)
+Kolory docelowe sa liczone niezaleznie w Pythonie z sat-in i porownywane z sat-target. Dla sat-out podawane jest, jak
 daleko wyslane bajty sa od zakodowanego gamma koloru docelowego (przy ruchomym obrazie roznica to wygladzanie).
 
 Uzycie:  python satroom.py 192.168.1.50 <yaml z kluczem API> "back:14,left:16,front:15,right:16" [gamma] [sekundy] [blur]
@@ -29,10 +29,10 @@ def hexes(s):
 
 
 def parse_in(line):
-    sides = {"L": [], "G": [], "P": [], "D": []}
-    for m in re.finditer(r"([LGPD]):((?:[0-9A-F]{6} ?)+)", line):
+    sides = {"L": [], "T": [], "R": [], "B": []}
+    for m in re.finditer(r"([LTRB]):((?:[0-9A-F]{6} ?)+)", line):
         sides[m.group(1)] = hexes(m.group(2).replace(" ", ""))
-    return [sides["L"], sides["G"], sides["P"], sides["D"]]
+    return [sides["L"], sides["T"], sides["R"], sides["B"]]
 
 
 def sample(ring, u):
@@ -80,20 +80,21 @@ def model(ring):
 
 bk = Bk(host, yaml_path)
 time.sleep(1.5)
-bk.set_switch("Diagnostyka: log sekcji", True)
+bk.set_switch("Diagnostics: section log", True)
 t0 = time.time()
 time.sleep(SECS)
-bk.set_switch("Diagnostyka: log sekcji", False)
+bk.set_switch("Diagnostics: section log", False)
 time.sleep(0.5)
 lines = [text for t, text in bk.logs if t >= t0]
-fps = [(float(m.group(1)), float(m.group(2))) for l in lines for m in [re.search(r"wideo ([\d.]+) fps, taśma ([\d.]+) fps", l)] if m]
+fps = [(float(m.group(1)), float(m.group(2))) for l in lines for m in [re.search(r"video ([\d.]+) fps, strip ([\d.]+) fps", l)] if m]
 frames, cur = [], {}
 for l in lines:
-    m = re.search(r"sat-(we|cel|wy) (.*)", l)
+    m = re.search(r"sat-(in|target|out) (.*)", l)
     if not m:
         continue
-    cur[m.group(1)] = m.group(2).strip()
-    if m.group(1) == "wy":
+    key = {"in": "we", "target": "cel", "out": "wy"}[m.group(1)]
+    cur[key] = m.group(2).strip()
+    if key == "wy":
         if len(cur) == 3:
             frames.append(cur)
         cur = {}

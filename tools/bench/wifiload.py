@@ -19,11 +19,11 @@ SECS = float(sys.argv[3]) if len(sys.argv) > 3 else 25
 RATE = float(sys.argv[4]) if len(sys.argv) > 4 else 120
 bk = Bk(host, yaml_path)
 time.sleep(4)
-SW = "Satelity (E1.31)"
+SW = "Satellites (E1.31)"
 before = bk.states.get(SW)
 if before:
     bk.set_switch(SW, False)
-RE = re.compile(r"klatki: (\d+) pełne, (\d+) częściowe, (\d+) zgubione, (\d+) błędne; wideo ([\d.]+) fps, taśma ([\d.]+) fps")
+RE = re.compile(r"frames: (\d+) ok, (\d+) partial, (\d+) dropped, (\d+) bad; video ([\d.]+) fps, strip ([\d.]+) fps")
 stop = threading.Event()
 stats = {"sent": 0, "icmp": 0}
 

@@ -24,8 +24,8 @@ esp = Esp(sys.argv[1])
 bk = Bk(sys.argv[2], sys.argv[3])
 time.sleep(1.5)
 read_cfg(bk.states)
-mix = float(bk.states.get("Wideo: doswietlenie ze srodka") or 0) / 100.0
-smoothing = float(bk.states.get("Wideo: wygladzanie") or 0)
+mix = float(bk.states.get("Video: inner fill") or 0) / 100.0
+smoothing = float(bk.states.get("Video: smoothing") or 0)
 bk.close()
 print("Tor BK7238:", CFG, "doswietlenie", mix, "wygladzanie", smoothing)
 if not _m.page_open():

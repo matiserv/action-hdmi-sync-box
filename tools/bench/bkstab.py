@@ -17,11 +17,11 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 bk = Bk(sys.argv[1], sys.argv[2])
 secs = float(sys.argv[3]) if len(sys.argv) > 3 else 30
 label = sys.argv[4] if len(sys.argv) > 4 else ""
-SEC_RE = re.compile(r"sekcje L:((?:[0-9A-F]{6} )*)G:((?:[0-9A-F]{6} )*)P:((?:[0-9A-F]{6} )*)\s*kadr x (\d+)\.\.(\d+) y (\d+)\.\.(\d+)")
+SEC_RE = re.compile(r"sections L:((?:[0-9A-F]{6} )*)T:((?:[0-9A-F]{6} )*)R:((?:[0-9A-F]{6} )*)\s*crop x (\d+)\.\.(\d+) y (\d+)\.\.(\d+)")
 time.sleep(1.0)
-bk.set_switch("Diagnostyka: log sekcji", True)
+bk.set_switch("Diagnostics: section log", True)
 time.sleep(secs + 1.5)
-bk.set_switch("Diagnostyka: log sekcji", False)
+bk.set_switch("Diagnostics: section log", False)
 time.sleep(0.5)
 rows, crops = [], set()
 for _, t in bk.logs:

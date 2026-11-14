@@ -456,3 +456,81 @@ Co wyszło na egzemplarzu wzorcowym (ściana ciemna, sufit z jasnych paneli):
   sceny po poprawce — kilkuprocentowy. Aparat przetwarza nasycone kolory nieliniowo.
 - **Aparat nie zastępuje oka:** przy zgodności w RAW w granicach 10 % aparat widział w poświacie za mało zielonego,
   a obserwator za dużo. Ostatni krok robi się na oko; właściciel ustawił ostatecznie R 1,0 / G 0,86 / B 0,60 i gammę 1,3.
+
+## v17.4 (2026-11-14): domieszki kolorów, gamma kanału, sekcje na stronie boxa, teksty po angielsku
+
+**Domieszki kolorów** (`set_color_mix(wyjście, wejście, wartość)`, suwaki „Color: mix … into …", 0–40 %). Macierz 3 × 3
+stosowana w świetle, zaraz po tablicy poziomów / balansu / gammy, przed nasyceniem; ta sama dla koloru krawędzi i środka.
+Wiersze są normowane do sumy 1, więc biel i szarości się nie zmieniają — domieszki przesuwają tylko barwy:
+„mix G into blue" rozjaśnia i odbarwia niebieski z taśmy (czysta zieleń świeci o tyle słabiej), „mix R into green"
+ociepla zieleń i żółty. Powód: po kalibracji bieli niebieska dioda nadal dominowała w kolorach niebieskawych, a żółty
+był zielonkawy; tor do taśmy przenosił te kolory wiernie (rampy biel / turkus / purpura → niebieski: odczyt ESP32
+w granicach kilku poziomów, wartości na taśmie proporcjonalne), więc poprawka musi dotyczyć samych diod.
+
+**Gamma kanału** (`set_gamma_channel(kanał, mnożnik)`, suwak „Color: blue gamma", 0,6–2,5): gamma jednego kanału =
+gamma ogólna × mnożnik. Większa wartość = kanał narasta wolniej; pełny poziom bez zmian, szarości tracą ten kolor.
+
+**Sekcje na stronie boxa** (`web_server: version: 3`, `sorting_groups`): Control, Picture: personal tuning,
+Strip color calibration, Mounting calibration, Status, Service. Każda encja ma w YAML `web_server: sorting_group_id`.
+
+**Teksty po angielsku.** Nazwy encji, efektów i sekcji, log komponentu, stany czujnika wejścia HDMI („no signal",
+„no data from ESP32") i komunikaty walidacji YAML są po angielsku. Linie logu, z których korzystają skrypty `bench`:
+
+    frames: N ok, N partial, N dropped, N bad; video F fps, strip F fps; bytes: …; seg0=…; log N us
+    satellites: N packets, service avg N us, max N us, send errors N
+    sections L:… T:… R:… crop x a..b y c..d inner N%          (boki: L, T, R, B zamiast L, G, P, D)
+    sat-in / sat-target / sat-out                              (było sat-we / sat-cel / sat-wy)
+
+Skrypty `bench` czytają nowe wzorce i nowe nazwy encji; ich własne komunikaty, komentarze w kodzie i konsola ESP32
+zostają po polsku. Wcześniejsze sekcje tego pliku używają starych nazw.
+
+Zmiana nazwy encji zmienia jej identyfikator w Home Assistant (np. `light.…_podswietlenie_tv` →
+`light.…_tv_backlight`) i klucz, pod którym box pamięta wartość suwaka, więc po aktualizacji suwaki wracają do
+wartości startowych. `bench`-owy zapis i odtworzenie stanów przez API przeniosło 22 ustawienia. Nazwa efektu
+zapamiętana przed zmianą jest tłumaczona przy włączeniu światła (tabela w `on_turn_on`).
+
+| Było | Jest |
+|---|---|
+| Podswietlenie TV | TV backlight |
+| Kolor sredni | Average color |
+| FPS wideo | Video FPS |
+| FPS tasmy | Strip FPS |
+| HDMI: wejscie | HDMI input |
+| HDMI: zaniki | HDMI dropouts |
+| Sygnal HDMI | HDMI signal |
+| Wideo: doswietlenie ze srodka | Video: inner fill |
+| Wideo: przygaszanie przy ciemnym srodku | Video: dim on dark center |
+| Wideo: jasnosc | Video: brightness |
+| Wideo: nasycenie | Video: saturation |
+| Wideo: wygladzanie | Video: smoothing |
+| Wideo: glebokosc probkowania | Video: sampling depth |
+| Wideo: wykrywanie czarnych pasow | Video: letterbox detection |
+| Wideo: interpolacja klatek | Video: frame interpolation |
+| Wideo: gas tasme bez sygnalu | Video: strip off without signal |
+| Wideo: balans R | Color: white balance R |
+| Wideo: balans G | Color: white balance G |
+| Wideo: balans B | Color: white balance B |
+| Wideo: gamma | Color: gamma |
+| Wideo: poziom czerni | Color: black level |
+| Wideo: poziom bieli | Color: white level |
+| Kalibracja: gamma niebieskiego | Color: blue gamma |
+| Kalibracja: domieszka G do czerwonego | Color: mix G into red |
+| Kalibracja: domieszka B do czerwonego | Color: mix B into red |
+| Kalibracja: domieszka R do zielonego | Color: mix R into green |
+| Kalibracja: domieszka B do zielonego | Color: mix B into green |
+| Kalibracja: domieszka R do niebieskiego | Color: mix R into blue |
+| Kalibracja: domieszka G do niebieskiego | Color: mix G into blue |
+| Kalibracja: odstep lewy bok | Mounting: left side offset |
+| Kalibracja: odstep gorny bok | Mounting: top side offset |
+| Kalibracja: odstep prawy bok | Mounting: right side offset |
+| Minutnik wylaczenia | Sleep timer |
+| Diagnostyka: log sekcji | Diagnostics: section log |
+| Satelity (E1.31) | Satellites (E1.31) |
+| Przycisk | Button |
+| Reset ustawien (w tym Wi-Fi) | Factory reset (incl. Wi-Fi) |
+
+Efekty: Synchronizacja HDMI → HDMI sync, Tecza → Rainbow, Tecza szybka → Rainbow fast, Przeplyw kolorow → Color wipe, Skaner → Scan, Migotanie → Twinkle, Losowe migotanie → Random twinkle, Fajerwerki → Fireworks, Plomien → Flicker, Oddychanie → Breathing, Fala → Wave.
+
+Sprawdzone po wgraniu: 38 encji w sześciu sekcjach (strumień `/events` strony boxa), 60 klatek/s, skrypty `satflick.py`
+i `dimcheck.py` działają na nowych tekstach. Domieszki i gamma kanału są sprawdzone tylko kompilacją i modelem
+(`bkmodel.py`); na obrazie jeszcze nie.

@@ -24,7 +24,7 @@ def cells(fn):
 
 
 def crop_now():
-    line = bk.wait_log("sekcje L:", 4.0)
+    line = bk.wait_log("sections L:", 4.0)
     m = re.search(r"kadr x (\d+)\.\.(\d+) y (\d+)\.\.(\d+)", line or "")
     return tuple(int(v) for v in m.groups()) if m else None
 
@@ -46,7 +46,7 @@ TESTS = [
 if not _m.page_open():
     print("UWAGA: strona testowa nie odpytuje serwera - wyniki beda bez znaczenia")
 time.sleep(1.0)
-bk.set_switch("Diagnostyka: log sekcji", True)
+bk.set_switch("Diagnostics: section log", True)
 post(TESTS[0][1])
 time.sleep(3.0)
 ok = True
@@ -60,7 +60,7 @@ try:
         print(f"{name}: kadr x {c[0]}..{c[1]} y {c[2]}..{c[3]}" if c else f"{name}: brak odczytu",
               f"(oczekiwane x {want[0]}..{want[1]})", "OK" if good else "ZLE")
 finally:
-    bk.set_switch("Diagnostyka: log sekcji", False)
+    bk.set_switch("Diagnostics: section log", False)
     post({"mode": "idle"})
     time.sleep(0.5)
 if bk.drops:

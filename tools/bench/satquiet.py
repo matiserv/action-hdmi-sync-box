@@ -13,8 +13,8 @@ from bkapi import Bk  # noqa: E402
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 host, yaml_path = sys.argv[2:4]
 SECS = float(sys.argv[4]) if len(sys.argv) > 4 else 60
-RE = re.compile(r"klatki: (\d+) pełne, (\d+) częściowe, (\d+) zgubione, (\d+) błędne")
-SW = "Satelity (E1.31)"
+RE = re.compile(r"frames: (\d+) ok, (\d+) partial, (\d+) dropped, (\d+) bad")
+SW = "Satellites (E1.31)"
 
 
 def counters(sat=None):
@@ -23,7 +23,7 @@ def counters(sat=None):
     st = bk.states.get(SW)
     if sat is not None:
         bk.set_switch(SW, sat)
-    line = bk.wait_log("klatki:", 4.0)
+    line = bk.wait_log("frames:", 4.0)
     t = time.time()
     bk.close()
     m = RE.search(line or "")

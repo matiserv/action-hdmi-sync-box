@@ -114,7 +114,7 @@ void SyncBox::setup() {
       mode |= SPI_CPOL;
     int r = bk_spi_slave_dma_init(1000000, mode);
     if (r != 0) {
-      ESP_LOGE(TAG, "SPI slave DMA init nieudany (%d)", r);
+      ESP_LOGE(TAG, "SPI slave DMA init failed (%d)", r);
       this->status_set_warning();
     } else {
       // Priorytet w numeracji Bekena (mniejsza liczba = wazniejszy; natywny FreeRTOS = 9 - liczba). Bylo 6 (natywny 3):
@@ -126,7 +126,7 @@ void SyncBox::setup() {
                                        syncbox_spi_task, 4096, this);
       this->spi_started_ = (st == kNoErr);
       if (!this->spi_started_) {
-        ESP_LOGE(TAG, "Nie udało się utworzyć wątku SPI (%d)", (int) st);
+        ESP_LOGE(TAG, "Could not create the SPI thread (%d)", (int) st);
         this->status_set_warning();
       }
     }
@@ -137,35 +137,35 @@ void SyncBox::setup() {
 void SyncBox::dump_config() {
   ESP_LOGCONFIG(TAG,
                 "HDMI Sync Box:\n"
-                "  Boki L/T/R/B: %u/%u/%u/%u (razem %u), róg startowy %u, %s\n"
-                "  Kolejność kolorów taśmy: %u%u%u, reset %u us\n"
-                "  Wideo: %s, SPI mode %u, klatka %u B, siatka %ux%u, głębokość %u\n"
-                "  Wygładzanie %.2f, nasycenie %.2f, jasność wideo %.2f, letterbox %s, auto-off %s, interpolacja %s",
+                "  Sides L/T/R/B: %u/%u/%u/%u (total %u), start corner %u, %s\n"
+                "  Strip colour order: %u%u%u, reset %u us\n"
+                "  Video: %s, SPI mode %u, frame %u B, grid %ux%u, depth %u\n"
+                "  Smoothing %.2f, saturation %.2f, video brightness %.2f, letterbox %s, auto-off %s, interpolation %s",
                 this->sides_[0], this->sides_[1], this->sides_[2], this->sides_[3], this->total_segments(),
-                this->start_corner_, this->clockwise_ ? "zgodnie z zegarem" : "przeciwnie do zegara",
+                this->start_corner_, this->clockwise_ ? "clockwise" : "counter-clockwise",
                 this->order_[0], this->order_[1], this->order_[2], (unsigned) this->reset_us_,
                 YESNO(this->video_enabled_), this->spi_mode_, this->frame_size_, this->grid_w_, this->grid_h_,
                 this->depth_, this->smoothing_, this->saturation_, this->video_brightness_, YESNO(this->letterbox_),
                 YESNO(this->auto_off_), YESNO(this->interpolate_));
   LOG_PIN("  Enable pin: ", this->enable_pin_);
   ESP_LOGCONFIG(TAG,
-                "  Odświeżanie taśmy co %u ms\n"
-                "  Kalibracja obrazu: poziomy %u..%u, balans R/G/B %.2f/%.2f/%.2f, gamma %.2f\n"
-                "  Doświetlenie ze środka: %.0f %%",
+                "  Strip refresh every %u ms\n"
+                "  Picture calibration: levels %u..%u, white balance R/G/B %.2f/%.2f/%.2f, gamma %.2f\n"
+                "  Inner fill: %.0f %%",
                 (unsigned) this->refresh_interval_ms_, this->level_black_, this->level_white_, this->wb_[0],
                 this->wb_[1], this->wb_[2], this->video_gamma_, this->inner_mix_ * 100.0f);
-  ESP_LOGCONFIG(TAG, "  Przygaszanie przy ciemnym środku: %.0f %%", this->inner_dim_ * 100.0f);
+  ESP_LOGCONFIG(TAG, "  Dim on dark centre: %.0f %%", this->inner_dim_ * 100.0f);
 #ifdef SYNCBOX_VIDEO
-  ESP_LOGCONFIG(TAG, "  Wątek SPI: %s", this->spi_started_ ? "działa" : "NIE działa");
+  ESP_LOGCONFIG(TAG, "  SPI thread: %s", this->spi_started_ ? "running" : "NOT running");
 #endif
 #ifdef SYNCBOX_SATELLITES
-  ESP_LOGCONFIG(TAG, "  Satelity (E1.31): %u, włączone: %s", (unsigned) this->satellites_.size(),
+  ESP_LOGCONFIG(TAG, "  Satellites (E1.31): %u, enabled: %s", (unsigned) this->satellites_.size(),
                 YESNO(this->satellites_enabled_));
   for (auto &sat : this->satellites_) {
-    static const char *const MODES[] = {"średni kolor", "kopia taśmy", "lewy bok",   "górny bok",
-                                        "prawy bok",    "dolny bok",   "całe pole",  "obwód pokoju"};
-    ESP_LOGCONFIG(TAG, "    %s: %s, universe %u, %s, %u px, jasność %.2f, max %u fps, przejście %u ms, gamma %.1f",
-                  sat.name.empty() ? "(bez nazwy)" : sat.name.c_str(),
+    static const char *const MODES[] = {"average colour", "strip copy", "left side",   "top side",
+                                        "right side",    "bottom side",   "whole field",  "room perimeter"};
+    ESP_LOGCONFIG(TAG, "    %s: %s, universe %u, %s, %u px, brightness %.2f, max %u fps, transition %u ms, gamma %.1f",
+                  sat.name.empty() ? "(unnamed)" : sat.name.c_str(),
                   sat.address.empty() ? "multicast" : sat.address.c_str(), sat.universe,
                   MODES[sat.mode < 8 ? sat.mode : 0], sat.leds, sat.brightness,
                   (unsigned) (1000000 / (sat.min_interval_us ? sat.min_interval_us : 1)),
@@ -184,7 +184,7 @@ void SyncBox::set_mode(SyncBoxMode m) {
   if (m == this->mode_)
     return;
   this->mode_ = m;
-  ESP_LOGI(TAG, "Tryb: %s", m == MODE_VIDEO ? "wideo (HDMI)" : "światło");
+  ESP_LOGI(TAG, "Mode: %s", m == MODE_VIDEO ? "video (HDMI)" : "light");
   if (m == MODE_LIGHT) {
     if (this->light_ != nullptr)
       this->light_->restore_static();
@@ -344,7 +344,7 @@ void SyncBox::loop() {
   const bool sig = recent && (uint32_t) (now - this->signal_start_ms_) >= 500;
   if (sig != this->signal_) {
     this->signal_ = sig;
-    ESP_LOGI(TAG, "Sygnał z układu wideo: %s", sig ? "jest" : "brak");
+    ESP_LOGI(TAG, "Signal from the video chip: %s", sig ? "present" : "none");
 #ifdef USE_BINARY_SENSOR
     if (this->signal_sensor_ != nullptr)
       this->signal_sensor_->publish_state(sig);
@@ -414,8 +414,9 @@ void SyncBox::rebuild_lut_() {
       float v = ((float) i - this->level_black_) / (span > 0 ? span : 1.0f);
       v = clamp(v, 0.0f, 1.0f) * this->wb_[c];
       v = clamp(v, 0.0f, 1.0f);
-      if (this->video_gamma_ != 1.0f)
-        v = powf(v, this->video_gamma_);
+      const float gm = this->video_gamma_ * this->gamma_ch_[c];
+      if (gm != 1.0f)
+        v = powf(v, gm);
       this->lut_[c][i] = (uint8_t) (v * 255.0f + 0.5f);
       this->lutf_[c][i] = v * 255.0f;
     }
@@ -444,7 +445,7 @@ void SyncBox::set_satellites_enabled(bool b) {
   if (b == this->satellites_enabled_)
     return;
   this->satellites_enabled_ = b;
-  ESP_LOGI(TAG, "Satelity: %s", b ? "włączone" : "wyłączone");
+  ESP_LOGI(TAG, "Satellites: %s", b ? "enabled" : "disabled");
 #ifdef SYNCBOX_SATELLITES
   if (!b) {
     // zgas satelity: ramka czerni, bez limitu fps
@@ -565,7 +566,7 @@ bool SyncBox::send_e131_(Satellite &sat, const uint8_t *data, size_t channels, u
   if (!this->udp_) {
     this->udp_ = socket::socket_ip(SOCK_DGRAM, IPPROTO_IP);
     if (!this->udp_) {
-      ESP_LOGW(TAG, "Satelity: nie można otworzyć gniazda UDP");
+      ESP_LOGW(TAG, "Satellites: cannot open a UDP socket");
       return false;
     }
     this->udp_->setblocking(false);
@@ -579,7 +580,7 @@ bool SyncBox::send_e131_(Satellite &sat, const uint8_t *data, size_t channels, u
     }
     sat.addrlen = socket::set_sockaddr((struct sockaddr *) &sat.addr, sizeof(sat.addr), ip, 5568);
     if (sat.addrlen == 0) {
-      ESP_LOGE(TAG, "Satelita %s: zły adres '%s'", sat.name.c_str(), ip.c_str());
+      ESP_LOGE(TAG, "Satellite %s: bad address '%s'", sat.name.c_str(), ip.c_str());
       sat.failed = true;
       return false;
     }
@@ -797,7 +798,7 @@ void SyncBox::send_satellites_(const uint8_t *rgb, size_t num_leds, bool light_o
       this->sat_log_ms_ = millis();
       static char buf[470];
       int p = 0;
-      static const char NAMES[4] = {'L', 'G', 'P', 'D'};
+      static const char NAMES[4] = {'L', 'T', 'R', 'B'};
       buf[0] = 0;
       for (uint8_t side = 0; side < 4; side++) {
         if (this->side_pos_[side].empty())
@@ -807,18 +808,18 @@ void SyncBox::send_satellites_(const uint8_t *rgb, size_t num_leds, bool light_o
           if (pos < num_leds && p < (int) sizeof(buf) - 8)
             p += snprintf(buf + p, sizeof(buf) - p, "%02X%02X%02X ", rgb[pos * 3], rgb[pos * 3 + 1], rgb[pos * 3 + 2]);
       }
-      ESP_LOGI(TAG, "sat-we %s", buf);
+      ESP_LOGI(TAG, "sat-in %s", buf);
       p = 0;
       buf[0] = 0;
       for (size_t i = 0; i < px && i < 75; i++)
         p += snprintf(buf + p, sizeof(buf) - p, "%02X%02X%02X", (unsigned) ((tgt[i * 3] + 128) >> 8),
                       (unsigned) ((tgt[i * 3 + 1] + 128) >> 8), (unsigned) ((tgt[i * 3 + 2] + 128) >> 8));
-      ESP_LOGI(TAG, "sat-cel %s", buf);
+      ESP_LOGI(TAG, "sat-target %s", buf);
       p = 0;
       buf[0] = 0;
       for (size_t i = 0; i < out_px && i < 75; i++)
         p += snprintf(buf + p, sizeof(buf) - p, "%02X%02X%02X", data[i * 3], data[i * 3 + 1], data[i * 3 + 2]);
-      ESP_LOGI(TAG, "sat-wy %s", buf);
+      ESP_LOGI(TAG, "sat-out %s", buf);
     }
     this->send_e131_(sat, data, channels);
     sat.last_tx_us = now;
@@ -1001,12 +1002,12 @@ void SyncBox::link_loop_() {
     this->esp_flags_ = st[4];
     if (this->esp_ver_logged_ != st[20]) {
       this->esp_ver_logged_ = st[20];
-      ESP_LOGI(TAG, "ESP32: firmware v%u.%u%s", st[20] / 10, st[20] % 10, (st[4] & 0x08) ? " (na próbie)" : "");
+      ESP_LOGI(TAG, "ESP32: firmware v%u.%u%s", st[20] / 10, st[20] % 10, (st[4] & 0x08) ? " (on trial)" : "");
     }
     const uint16_t drops = (uint16_t) (st[12] | (st[13] << 8));
     if (!this->esp_dropouts_known_ || drops != this->esp_dropouts_) {
       if (this->esp_dropouts_known_ && drops > this->esp_dropouts_)
-        ESP_LOGW(TAG, "HDMI: zanik sygnału na wejściu (od startu ESP32: %u)", drops);
+        ESP_LOGW(TAG, "HDMI: input signal dropout (since ESP32 start: %u)", drops);
       this->esp_dropouts_ = drops;
       this->esp_dropouts_known_ = true;
 #ifdef USE_SENSOR
@@ -1020,9 +1021,9 @@ void SyncBox::link_loop_() {
     this->link_pub_ms_ = now;
     char txt[48];
     if (!this->esp_fresh_) {
-      snprintf(txt, sizeof(txt), "brak danych z ESP32");
+      snprintf(txt, sizeof(txt), "no data from ESP32");
     } else if (!(st[4] & 0x01)) {
-      snprintf(txt, sizeof(txt), "brak sygnału");
+      snprintf(txt, sizeof(txt), "no signal");
     } else {
       static const char *const HDR[] = {"SDR", "HDR10", "HDR10+", "Dolby Vision", "HLG", "HDR?"};
       const uint16_t w = (uint16_t) (st[6] | (st[7] << 8)), hh = (uint16_t) (st[8] | (st[9] << 8));
@@ -1031,7 +1032,7 @@ void SyncBox::link_loop_() {
     }
     if (this->hdmi_published_ != txt) {
       this->hdmi_published_ = txt;
-      ESP_LOGI(TAG, "HDMI wejście: %s", txt);
+      ESP_LOGI(TAG, "HDMI input: %s", txt);
 #ifdef USE_TEXT_SENSOR
       if (this->hdmi_input_sensor_ != nullptr)
         this->hdmi_input_sensor_->publish_state(txt);
@@ -1045,7 +1046,7 @@ void SyncBox::link_loop_() {
 void SyncBox::console_close_(const char *why) {
   this->tun_active_ = false;
   this->con_client_.reset();
-  ESP_LOGI(TAG, "Konsola ESP32: klient rozłączony (%s)", why);
+  ESP_LOGI(TAG, "ESP32 console: client disconnected (%s)", why);
 }
 
 // Serwer TCP konsoli ESP32: bajty od klienta ida tunelem do konsoli ESP32, wyjscie konsoli wraca do klienta.
@@ -1067,13 +1068,13 @@ void SyncBox::console_loop_() {
       ok = sl != 0 && this->con_server_->bind((struct sockaddr *) &sa, sl) == 0 && this->con_server_->listen(1) == 0;
     }
     if (!ok) {
-      ESP_LOGE(TAG, "Konsola ESP32: nie można otworzyć portu %u", this->console_port_);
+      ESP_LOGE(TAG, "ESP32 console: cannot open port %u", this->console_port_);
       this->con_server_.reset();
       this->con_server_failed_ = true;
       return;
     }
-    ESP_LOGI(TAG, "Konsola ESP32: port TCP %u%s", this->console_port_,
-             this->console_password_.empty() ? " (BEZ HASŁA)" : "");
+    ESP_LOGI(TAG, "ESP32 console: TCP port %u%s", this->console_port_,
+             this->console_password_.empty() ? " (NO PASSWORD)" : "");
   }
   if (!this->con_client_) {
     struct sockaddr_storage src;
@@ -1091,16 +1092,16 @@ void SyncBox::console_loop_() {
     this->tun_resetting_ = true;  // obie strony tunelu zaczynaja od zera
     this->tun_active_ = true;
     this->con_reset_ms_ = millis();
-    ESP_LOGI(TAG, "Konsola ESP32: klient podłączony");
+    ESP_LOGI(TAG, "ESP32 console: client connected");
     return;
   }
   if (this->tun_resetting_) {
     // czekamy, az ESP32 potwierdzi zerowanie tunelu (2-3 ramki); bez odpowiedzi (stary firmware ESP32, brak linii
     // MISO) klient dostaje komunikat i jest rozlaczany, zeby nie blokowal portu
     if ((uint32_t) (millis() - this->con_reset_ms_) > 3000) {
-      static const char MSG[] = "ERR ESP32 nie odpowiada na laczu zwrotnym\n";
+      static const char MSG[] = "ERR ESP32 does not answer on the return link\n";
       this->con_client_->write(MSG, sizeof(MSG) - 1);
-      this->console_close_("ESP32 nie odpowiada");  // najpierw wylacza tunel: watek SPI moze wejsc miedzy te linie
+      this->console_close_("ESP32 does not answer");  // najpierw wylacza tunel: watek SPI moze wejsc miedzy te linie
       this->tun_resetting_ = false;
     }
     return;
@@ -1113,12 +1114,12 @@ void SyncBox::console_loop_() {
   if (want != 0) {
     const ssize_t n = this->con_client_->read(buf, want);
     if (n == 0) {
-      this->console_close_("koniec połączenia");
+      this->console_close_("connection closed");
       return;
     }
     if (n < 0) {
       if (errno != EWOULDBLOCK && errno != EAGAIN) {
-        this->console_close_("błąd odczytu");
+        this->console_close_("read error");
         return;
       }
     } else if (this->con_authed_) {
@@ -1132,8 +1133,8 @@ void SyncBox::console_loop_() {
           if (this->con_auth_buf_ == this->console_password_) {
             this->con_authed_ = true;
           } else {
-            this->con_client_->write("ERR haslo\n", 10);
-            this->console_close_("złe hasło");
+            this->con_client_->write("ERR password\n", 13);
+            this->console_close_("wrong password");
             return;
           }
         } else if (buf[i] != '\r' && this->con_auth_buf_.size() < 80) {
@@ -1154,7 +1155,7 @@ void SyncBox::console_loop_() {
       if (w > 0) {
         this->con_up_.r = this->con_up_.r + (uint32_t) w;
       } else if (w < 0 && errno != EWOULDBLOCK && errno != EAGAIN) {
-        this->console_close_("błąd zapisu");
+        this->console_close_("write error");
         return;
       }
     }
@@ -1234,7 +1235,7 @@ void SyncBox::update_crop_(const uint8_t *rows, const uint8_t *cols, const uint8
                      cand.y1 >= this->crop_.y1;
   if (this->pending_count_ >= (grows ? CROP_GROW_FRAMES : CROP_SHRINK_FRAMES)) {
     this->crop_ = cand;
-    ESP_LOGI(TAG, "Kadr: x %u..%u, y %u..%u", cand.x0, cand.x1, cand.y0, cand.y1);
+    ESP_LOGI(TAG, "Crop: x %u..%u, y %u..%u", cand.x0, cand.x1, cand.y0, cand.y1);
   }
 }
 
@@ -1347,7 +1348,7 @@ void SyncBox::process_frame_() {
       this->pending_crop_ = this->crop_;
       this->pending_count_ = 0;
       std::fill(this->mix_v_.begin(), this->mix_v_.end(), 0.0f);
-      ESP_LOGI(TAG, "Pole z ukladu wideo: %u x %u%s", (unsigned) w, (unsigned) hh, off ? " (naglowek)" : "");
+      ESP_LOGI(TAG, "Field from the video chip: %u x %u%s", (unsigned) w, (unsigned) hh, off ? " (header)" : "");
     }
   }
   const int W = this->eff_w_;
@@ -1410,6 +1411,8 @@ void SyncBox::process_frame_() {
       return this->lutf_[c][i] + (this->lutf_[c][i + 1] - this->lutf_[c][i]) * t;
     };
     float fr = lut(0, r), fg = lut(1, g), fb = lut(2, b);
+    if (this->cmix_on_)  // domieszki kolorow: w swietle, przed nasyceniem
+      this->apply_cmix_(fr, fg, fb);
     // nasycenie
     const float gray = (fr + fg + fb) / 3.0f;
     fr = clamp(gray + (fr - gray) * sat, 0.0f, 255.0f);
@@ -1438,6 +1441,8 @@ void SyncBox::process_frame_() {
         }
         const float inv = 1.0f / (float) ((iyb - iya + 1) * (ixb - ixa + 1));
         float m_r = (float) mr * inv, m_g = (float) mg * inv, m_b = (float) mb * inv;
+        if (this->cmix_on_)
+          this->apply_cmix_(m_r, m_g, m_b);
         const float mgray = (m_r + m_g + m_b) / 3.0f;  // to samo nasycenie co dla krawedzi
         m_r = clamp(mgray + (m_r - mgray) * sat, 0.0f, 255.0f);
         m_g = clamp(mgray + (m_g - mgray) * sat, 0.0f, 255.0f);
@@ -1567,14 +1572,14 @@ void SyncBox::log_stats_() {
   if (this->log_frames_) {
     const uint8_t *f = this->frame_buf_ + this->pix_off_;
     ESP_LOGI(TAG,
-             "klatki: %u pełne, %u częściowe, %u zgubione, %u błędne; wideo %.1f fps, taśma %.1f fps; bajty: %02X %02X %02X %02X "
+             "frames: %u ok, %u partial, %u dropped, %u bad; video %.1f fps, strip %.1f fps; bytes: %02X %02X %02X %02X "
              "%02X %02X; seg0=%02X%02X%02X; log %u us",
              (unsigned) this->frames_total_, (unsigned) this->frames_partial_, (unsigned) this->frames_dropped_,
              (unsigned) this->frames_bad_, this->video_fps_, this->led_fps_, f[0], f[1], f[2], f[3], f[4], f[5], this->seg_colors_[0].r,
              this->seg_colors_[0].g, this->seg_colors_[0].b, (unsigned) this->log_us_);
 #ifdef SYNCBOX_SATELLITES
     if (this->sat_us_cnt_ != 0) {
-      ESP_LOGI(TAG, "satelity: %u pakietów, obsługa śr. %u us, max %u us, błędy wysyłki %u", (unsigned) this->sat_us_cnt_,
+      ESP_LOGI(TAG, "satellites: %u packets, service avg %u us, max %u us, send errors %u", (unsigned) this->sat_us_cnt_,
                (unsigned) (this->sat_us_sum_ / this->sat_us_cnt_), (unsigned) this->sat_us_max_, (unsigned) this->sat_errors_);
       this->sat_us_sum_ = this->sat_us_max_ = this->sat_us_cnt_ = 0;
     }
@@ -1589,7 +1594,7 @@ void SyncBox::log_stats_() {
 void SyncBox::log_sections_line_() {
   char buf[400];
   int k = 0;
-  static const char NAMES[4] = {'L', 'G', 'P', 'D'};
+  static const char NAMES[4] = {'L', 'T', 'R', 'B'};
   for (uint8_t side = 0; side < 4; side++) {
     if (this->sides_[side] == 0)
       continue;
@@ -1605,7 +1610,7 @@ void SyncBox::log_sections_line_() {
       }
     }
   }
-  ESP_LOGI(TAG, "sekcje %s kadr x %u..%u y %u..%u srodek %.0f%%", buf, this->crop_.x0, this->crop_.x1, this->crop_.y0,
+  ESP_LOGI(TAG, "sections %s crop x %u..%u y %u..%u inner %.0f%%", buf, this->crop_.x0, this->crop_.x1, this->crop_.y0,
            this->crop_.y1, this->inner_mix_ * 100.0f);
 }
 
@@ -1702,7 +1707,7 @@ void SyncBoxLight::setup() {
   this->buf_ = allocator.allocate(this->num_leds_ * 3);
   this->effect_data_ = allocator.allocate(this->num_leds_);
   if (this->buf_ == nullptr || this->effect_data_ == nullptr) {
-    ESP_LOGE(TAG, "Brak pamięci na bufor taśmy");
+    ESP_LOGE(TAG, "Out of memory for the strip buffer");
     this->mark_failed();
     return;
   }
@@ -1718,8 +1723,8 @@ light::ESPColorView SyncBoxLight::get_view_internal(int32_t index) const {
 void SyncBoxLight::dump_config() {
   ESP_LOGCONFIG(TAG,
                 "Sync Box LED strip:\n"
-                "  Sekcje: %u\n"
-                "  Max. częstotliwość odświeżania: %u us",
+                "  Sections: %u\n"
+                "  Max refresh rate: %u us",
                 this->num_leds_, (unsigned) this->max_refresh_rate_);
 }
 

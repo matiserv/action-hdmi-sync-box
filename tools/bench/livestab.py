@@ -22,8 +22,8 @@ bk = Bk(sys.argv[2], sys.argv[3])
 NG = int(sys.argv[4]) if len(sys.argv) > 4 else 12
 time.sleep(1.5)
 read_cfg(bk.states)
-mix = float(bk.states.get("Wideo: doswietlenie ze srodka") or 0) / 100.0
-print("Tor BK7238:", CFG, "doswietlenie", mix, "wygladzanie", bk.states.get("Wideo: wygladzanie"))
+mix = float(bk.states.get("Video: inner fill") or 0) / 100.0
+print("Tor BK7238:", CFG, "doswietlenie", mix, "wygladzanie", bk.states.get("Video: smoothing"))
 
 txt = esp.cmd("stat", wait=1.5)
 for l in txt.splitlines():
@@ -71,9 +71,9 @@ for d, y, x in bad:
 
 print("\nlog BK7238 z czasu pomiaru:")
 for _, t in bk.logs:
-    if "Kadr:" in t or "Pole z" in t or "Sygna" in t:
+    if "Crop:" in t or "Field from" in t or "Signal from" in t:
         print("  ", t.strip()[:150])
-kl = [t for _, t in bk.logs if "klatki:" in t]
+kl = [t for _, t in bk.logs if "frames:" in t]
 if kl:
     print("  ", re.sub(r"^\S+ ", "", kl[-1].strip())[:170])
 txt = esp.cmd("stat", wait=1.5)

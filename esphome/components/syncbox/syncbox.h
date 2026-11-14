@@ -176,6 +176,33 @@ class SyncBox : public Component {
   // Przygaszanie przy ciemnym srodku: 0 = wylaczone, 1 = sekcja nie swieci jasniej niz obraz w glebi.
   void set_inner_dim(float s) { this->inner_dim_ = clamp(s, 0.0f, 1.0f); }
   float get_inner_dim() const { return this->inner_dim_; }
+  // Domieszka: ile swiatla kanalu `out` (0 = R, 1 = G, 2 = B) dodac za kolor `in` z obrazu, 0..0.5. Wiersz macierzy
+  // jest normowany do sumy 1, wiec biel i szarosci sie nie zmieniaja: np. domieszka G do niebieskiego rozjasnia i
+  // odbarwia sam niebieski, a czysta zielen swieci o tyle slabiej.
+  void set_color_mix(uint8_t out, uint8_t in, float v) {
+    if (out > 2 || in > 2 || out == in || v != v)
+      return;
+    this->cmix_[out][in] = clamp(v, 0.0f, 0.5f);
+    this->cmix_on_ = false;
+    for (uint8_t o = 0; o < 3; o++) {
+      float sum = 0.0f;
+      for (uint8_t i = 0; i < 3; i++)
+        if (i != o) {
+          sum += this->cmix_[o][i];
+          if (this->cmix_[o][i] > 0.0f)
+            this->cmix_on_ = true;
+        }
+      this->cmix_[o][o] = sum < 1.0f ? 1.0f - sum : 0.0f;
+    }
+  }
+  // Mnoznik gammy jednego kanalu (1 = jak suwak gammy). Wiekszy = kanal narasta wolniej (ciemne i srednie poziomy
+  // slabsze, pelny poziom bez zmian).
+  void set_gamma_channel(uint8_t c, float m) {
+    if (c < 3 && m == m) {
+      this->gamma_ch_[c] = clamp(m, 0.3f, 3.0f);
+      this->lut_dirty_ = true;
+    }
+  }
   // Raz na sekunde kolory wszystkich sekcji w logu (do testow na stanowisku).
   void set_log_sections(bool b) { this->log_sections_ = b; }
   // Pojedyncze skladowe kalibracji (suwaki w HA ustawiaja je niezaleznie, takze przy starcie).
@@ -336,6 +363,15 @@ class SyncBox : public Component {
   // doswietlenie ze srodka: udzial i wygladzona jasnosc srodka kazdej sekcji
   float inner_mix_{0.0f};
   float inner_dim_{0.0f};
+  float cmix_[3][3]{{1.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f, 1.0f}};  // [wyjscie][wejscie]
+  bool cmix_on_{false};
+  float gamma_ch_[3]{1.0f, 1.0f, 1.0f};
+  void apply_cmix_(float &r, float &g, float &b) const {
+    const float i0 = r, i1 = g, i2 = b;
+    r = clamp(this->cmix_[0][0] * i0 + this->cmix_[0][1] * i1 + this->cmix_[0][2] * i2, 0.0f, 255.0f);
+    g = clamp(this->cmix_[1][0] * i0 + this->cmix_[1][1] * i1 + this->cmix_[1][2] * i2, 0.0f, 255.0f);
+    b = clamp(this->cmix_[2][0] * i0 + this->cmix_[2][1] * i1 + this->cmix_[2][2] * i2, 0.0f, 255.0f);
+  }
   std::vector<float> mix_v_;  // jasnosc srodka do doswietlenia: narasta powoli, opada od razu
   std::vector<float> mix_d_;  // jasnosc srodka do przygaszania: narasta od razu, opada powoli
   // interpolacja miedzy klatkami: tasma odswiezana ~60 Hz takze przy wolnym zrodle

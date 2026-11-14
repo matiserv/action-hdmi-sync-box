@@ -97,7 +97,7 @@ connected.
 
 **Receiving.** A thread on the BK7238 waits in a DMA receive for `frame_size` bytes or the rising edge of CS. A frame
 is used only if the marker bytes, the inverted sizes and the byte sum agree; otherwise it is dropped and counted
-(`częściowe` and `błędne` in the log line `klatki:`), and the strip keeps its colours until the next frame. This
+(`partial` and `bad` in the log line `frames:`), and the strip keeps its colours until the next frame. This
 thread runs above the Wi-Fi tasks: it has about 12 ms between frames to re-arm the receive, and when it ran below
 them every Wi-Fi transmission could cost a frame. The main loop then maps the field to the 28 strip sections
 (see [Calibration](#calibration)).
@@ -250,15 +250,15 @@ Open a serial terminal on the ESP32 header `5J1` (115200 8N1) and type `help`. T
 
 Checks, in this order:
 
-1. `pattern 1`: the strip shows a moving rainbow and Home Assistant shows "FPS wideo" near 60. This proves the
+1. `pattern 1`: the strip shows a moving rainbow and Home Assistant shows "Video FPS" near 60. This proves the
    SPI link and the BK7238 side.
 2. `pattern 2`: red must be on the left edge of the TV, green on top, blue on the right (seen from the front).
    If not, fix `start_corner` / `direction` in the YAML.
 3. `pattern 0` with an HDMI source: `stat` should show VSync 60 Hz, format 1080p and 0 empty cells.
-4. In Home Assistant turn on the light and select the effect "Synchronizacja HDMI".
+4. In Home Assistant turn on the light and select the effect "HDMI sync".
 
-Entity names in the example configuration are in Polish ("Wideo: gamma", "FPS wideo", …); rename them in the YAML
-if you prefer.
+The web page of the box (`http://<address>`) groups the entities into sections: Control, Picture: personal tuning,
+Strip color calibration, Mounting calibration, Status and Service.
 
 ## Without the cable: status, console and updates over Wi-Fi
 
@@ -266,7 +266,7 @@ After the first flash the UART adapter is not needed any more (ESP32 firmware v1
 link between the two chips carries more than the picture:
 
 - **HDMI status in Home Assistant.** `hdmi_input` shows the input format and HDR mode as text
-  (`3840x2160P60 HDR10`, or "brak sygnału" when there is no signal) and `hdmi_dropouts` counts signal losses at the
+  (`3840x2160P60 HDR10`, or "no signal") and `hdmi_dropouts` counts signal losses at the
   input. Every change is also written to the ESPHome log.
 - **ESP32 console over the network.** With `esp32_console:` in the YAML the box opens a TCP port (2323). All
   console commands work through it, and the tools accept `tcp://<box-address>:2323` in place of `COM4`:
@@ -370,20 +370,26 @@ The colour chain on the BK7238 is: mean of the edge cells (`depth`) → black/wh
 
    ![Strip mounting seen from the back of the TV](docs/img/strip-layout-tv-back.png)
 
-2. **White balance:** show a white screen and adjust "Wideo: balans R/G/B" until the strip is neutral
+2. **White balance:** show a white screen and adjust "Color: white balance R/G/B" until the strip is neutral
    (a bluish white → lower B).
-3. **Black level:** show a black screen and raise "Wideo: poziom czerni" until the strip goes dark.
+3. **Black level:** show a black screen and raise "Color: black level" until the strip goes dark.
 4. **Gamma and saturation:** on normal content. Higher gamma deepens contrast; saturation above 1 makes colours
    stronger.
-5. **Sampling depth and side offsets:** "Wideo: głębokość próbkowania" sets how many cells from the edge are
-   averaged (1 = a narrow band, livelier colours); "Kalibracja: odstęp … bok" skips cells at the edge.
-6. **Smoothing:** "Wideo: wygładzanie" (0 = none). The ESP32 already filters noise, so small values are enough.
-7. **Inner mix:** "Wideo: doświetlenie ze środka" (0–40 %) adds light from deeper in the picture when the edge is
+5. **Sampling depth and side offsets:** "Video: sampling depth" sets how many cells from the edge are
+   averaged (1 = a narrow band, livelier colours); "Mounting: … side offset" skips cells at the edge.
+6. **Smoothing:** "Video: smoothing" (0 = none). The ESP32 already filters noise, so small values are enough.
+7. **Inner mix:** "Video: inner fill" (0–40 %) adds light from deeper in the picture when the edge is
    much darker than the interior.
-8. **Centre dimming:** "Wideo: przygaszanie przy ciemnym środku" (0–100 %, off in the example config) is the
+8. **Centre dimming:** "Video: dim on dark center" (0–100 %, off in the example config) is the
    opposite case: when the interior is darker than the edge, the section loses that share of the difference in
    brightness, keeping the edge colour. Use it if a bright, contrasty edge lights the strip up while the rest
    of the screen is dark; try a larger sampling depth first.
+9. **Colour mixes:** "Color: mix … into …" (0–40 %) add light of one LED channel for another colour of the picture.
+   White and greys do not change. "mix G into blue" makes the strip's blue lighter and less pure, "mix R into
+   green" warms up green and yellow. Use them when a hue of the strip differs from the screen after the white
+   balance is right.
+10. **Blue gamma:** "Color: blue gamma" multiplies the gamma of the blue channel only (higher = blue rises more
+    slowly; greys lose some blue).
 
 Values used on the reference unit: gamma 2.6, saturation 1.2–1.8, smoothing 0.3, white balance 1.0 / 1.0 / 1.0,
 side offsets 1, inner mix 25 %. Sliders are stored in flash and survive updates.

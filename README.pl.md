@@ -96,7 +96,7 @@ blok stanu: pięć razy na sekundę albo co 16 ms, gdy podłączony jest klient 
 
 **Odbiór.** Wątek na BK7238 czeka w odbiorze DMA na `frame_size` bajtów albo na narastające zbocze CS. Ramka jest
 używana tylko wtedy, gdy zgadzają się bajty znacznika, odwrócone rozmiary i suma bajtów; inaczej jest odrzucana
-i liczona (`częściowe` i `błędne` w linii logu `klatki:`), a taśma trzyma kolory do następnej ramki. Wątek pracuje
+i liczona (`partial` i `bad` w linii logu `frames:`), a taśma trzyma kolory do następnej ramki. Wątek pracuje
 powyżej zadań Wi-Fi: na ponowne uzbrojenie odbioru ma ok. 12 ms między ramkami, a gdy pracował poniżej nich,
 każde nadawanie Wi-Fi mogło kosztować klatkę. Pętla główna rozkłada potem pole na 28 sekcji taśmy
 (patrz [Kalibracja](#kalibracja)).
@@ -247,12 +247,15 @@ Otwórz terminal szeregowy na złączu ESP32 `5J1` (115200 8N1) i wpisz `help`. 
 
 Testy, w tej kolejności:
 
-1. `pattern 1`: na taśmie płynie tęcza, a Home Assistant pokazuje „FPS wideo” blisko 60. To potwierdza łącze SPI
+1. `pattern 1`: na taśmie płynie tęcza, a Home Assistant pokazuje „Video FPS” blisko 60. To potwierdza łącze SPI
    i stronę BK7238.
 2. `pattern 2`: czerwony ma być na lewej krawędzi TV, zielony u góry, niebieski z prawej (patrząc od przodu).
    Jeśli nie, popraw `start_corner` / `direction` w YAML.
 3. `pattern 0` ze źródłem HDMI: `stat` powinien pokazać VSync 60 Hz, format 1080p i 0 pustych komórek.
-4. W Home Assistant włącz światło i wybierz efekt „Synchronizacja HDMI”.
+4. W Home Assistant włącz światło i wybierz efekt „HDMI sync”.
+
+Nazwy encji, efektów i log są po angielsku. Strona boxa (`http://<adres>`) dzieli encje na sekcje: Control,
+Picture: personal tuning, Strip color calibration, Mounting calibration, Status i Service.
 
 ## Bez kabla: stan, konsola i aktualizacje przez Wi-Fi
 
@@ -260,7 +263,7 @@ Po pierwszym wgraniu adapter UART nie jest już potrzebny (firmware ESP32 v14.4+
 układami niesie więcej niż obraz:
 
 - **Stan HDMI w Home Assistant.** `hdmi_input` pokazuje format wejścia i tryb HDR jako tekst
-  (`3840x2160P60 HDR10` albo „brak sygnału”), a `hdmi_dropouts` liczy zaniki sygnału na wejściu. Każda zmiana trafia
+  (`3840x2160P60 HDR10` albo „no signal”), a `hdmi_dropouts` liczy zaniki sygnału na wejściu. Każda zmiana trafia
   też do logu ESPHome.
 - **Konsola ESP32 po sieci.** Z wpisem `esp32_console:` w YAML box otwiera port TCP (2323). Działają przez niego
   wszystkie komendy konsoli, a narzędzia przyjmują `tcp://<adres-boxa>:2323` zamiast `COM4`:
@@ -363,19 +366,24 @@ nasycenie → doświetlenie ze środka i przygaszanie → jasność → wygładz
 
    ![Montaż taśmy, widok od tyłu TV](docs/img/strip-layout-tv-back.png)
 
-2. **Balans bieli:** wyświetl biały ekran i ustaw „Wideo: balans R/G/B” tak, żeby taśma była neutralna
+2. **Balans bieli:** wyświetl biały ekran i ustaw „Color: white balance R/G/B” tak, żeby taśma była neutralna
    (niebieskawa biel → zmniejsz B).
-3. **Poziom czerni:** wyświetl czarny ekran i podnoś „Wideo: poziom czerni”, aż taśma zgaśnie.
+3. **Poziom czerni:** wyświetl czarny ekran i podnoś „Color: black level”, aż taśma zgaśnie.
 4. **Gamma i nasycenie:** na zwykłym obrazie. Większa gamma pogłębia kontrast; nasycenie powyżej 1 wzmacnia kolory.
-5. **Głębokość próbkowania i odstępy boków:** „Wideo: głębokość próbkowania” ustala, ile komórek od krawędzi
-   wchodzi do średniej (1 = wąski pas, żywsze kolory); „Kalibracja: odstęp … bok” pomija komórki przy krawędzi.
-6. **Wygładzanie:** „Wideo: wygładzanie” (0 = brak). ESP32 już filtruje szum, więc wystarczają małe wartości.
-7. **Doświetlenie ze środka:** „Wideo: doświetlenie ze środka” (0–40 %) dodaje światło z głębi obrazu, gdy
+5. **Głębokość próbkowania i odstępy boków:** „Video: sampling depth” ustala, ile komórek od krawędzi
+   wchodzi do średniej (1 = wąski pas, żywsze kolory); „Mounting: … side offset” pomija komórki przy krawędzi.
+6. **Wygładzanie:** „Video: smoothing” (0 = brak). ESP32 już filtruje szum, więc wystarczają małe wartości.
+7. **Doświetlenie ze środka:** „Video: inner fill” (0–40 %) dodaje światło z głębi obrazu, gdy
    krawędź jest dużo ciemniejsza niż wnętrze.
-8. **Przygaszanie przy ciemnym środku:** „Wideo: przygaszanie przy ciemnym środku” (0–100 %, w przykładowej
+8. **Przygaszanie przy ciemnym środku:** „Video: dim on dark center” (0–100 %, w przykładowej
    konfiguracji wyłączone) to przypadek odwrotny: gdy wnętrze jest ciemniejsze od krawędzi, sekcja traci taki
    procent różnicy jasności, a kolor krawędzi zostaje. Przydaje się, gdy jasny, kontrastowy brzeg rozświetla
    taśmę przy ciemnej reszcie ekranu; najpierw spróbuj większej głębokości próbkowania.
+9. **Domieszki kolorów:** „Color: mix … into …” (0–40 %) dodają światło jednego kanału diod za inny kolor obrazu.
+   Biel i szarości się nie zmieniają. „mix G into blue” rozjaśnia i odbarwia niebieski z taśmy, „mix R into green”
+   ociepla zieleń i żółty. Przydają się, gdy po ustawieniu balansu bieli któraś barwa taśmy różni się od ekranu.
+10. **Gamma niebieskiego:** „Color: blue gamma” mnoży gammę samego kanału niebieskiego (większa = niebieski
+    narasta wolniej; szarości tracą trochę niebieskiego).
 
 Wartości używane na egzemplarzu wzorcowym: gamma 2,6, nasycenie 1,2–1,8, wygładzanie 0,3, balans bieli
 1,0 / 1,0 / 1,0, odstępy boków 1, doświetlenie ze środka 25 %. Suwaki są zapisywane we flash i przeżywają

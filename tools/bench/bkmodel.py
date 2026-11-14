@@ -7,7 +7,7 @@ import math
 
 # ustawienia toru BK7238 (jak w hdmi-syncbox.yaml; odczytywane z urzadzenia nizej)
 CFG = {"gamma": 1.8, "wb": [1.0, 1.0, 0.85], "black": 0.0, "white": 255.0, "sat": 1.5, "depth": 2, "bright": 1.0,
-       "dim": 0.0,
+       "dim": 0.0, "gch": [1.0, 1.0, 1.0], "cmix": [[0.0] * 3 for _ in range(3)],
        "off": {"L": 0, "G": 0, "P": 0}}
 SIDES = {"L": 7, "G": 14, "P": 7}
 KNEE = 16.0
@@ -18,11 +18,15 @@ W, H = 48, 27
 
 def read_cfg(states):
     """Stany suwakow (od v15 sa tozsame z tym, na czym pracuje komponent)."""
-    names = {"Wideo: gamma": "gamma", "Wideo: poziom czerni": "black", "Wideo: poziom bieli": "white",
-             "Wideo: nasycenie": "sat", "Wideo: glebokosc probkowania": "depth", "Wideo: jasnosc": "bright",
-             "Wideo: przygaszanie przy ciemnym srodku": "dim"}
-    wb = {"Wideo: balans R": 0, "Wideo: balans G": 1, "Wideo: balans B": 2}
-    offs = {"Kalibracja: odstep lewy bok": "L", "Kalibracja: odstep gorny bok": "G", "Kalibracja: odstep prawy bok": "P"}
+    names = {"Color: gamma": "gamma", "Color: black level": "black", "Color: white level": "white",
+             "Video: saturation": "sat", "Video: sampling depth": "depth", "Video: brightness": "bright",
+             "Video: dim on dark center": "dim"}
+    wb = {"Color: white balance R": 0, "Color: white balance G": 1, "Color: white balance B": 2}
+    mixes = {"Color: mix G into red": (1, 0), "Color: mix B into red": (2, 0),
+             "Color: mix R into green": (0, 1), "Color: mix B into green": (2, 1),
+             "Color: mix R into blue": (0, 2), "Color: mix G into blue": (1, 2)}
+    gch = {"Color: red gamma": 0, "Color: green gamma": 1, "Color: blue gamma": 2}
+    offs = {"Mounting: left side offset": "L", "Mounting: top side offset": "G", "Mounting: right side offset": "P"}
     for n, v in states.items():
         if v is None:
             continue
@@ -32,6 +36,10 @@ def read_cfg(states):
             CFG["wb"][wb[n]] = float(v)
         elif n in offs:
             CFG["off"][offs[n]] = int(v)
+        elif n in mixes:
+            CFG["cmix"][mixes[n][0]][mixes[n][1]] = float(v) / 100.0
+        elif n in gch:
+            CFG["gch"][gch[n]] = float(v)
     CFG["depth"] = int(CFG["depth"])
 
 
@@ -40,7 +48,19 @@ def read_cfg(states):
 def lutf(c, code):
     span = CFG["white"] - CFG["black"]
     v = min(max((code - CFG["black"]) / (span if span > 0 else 1.0), 0.0), 1.0) * CFG["wb"][c]
-    return min(max(v, 0.0), 1.0) ** CFG["gamma"] * 255.0
+    return min(max(v, 0.0), 1.0) ** (CFG["gamma"] * CFG["gch"][c]) * 255.0
+
+
+def cmix(v):
+    """Domieszki kolorow: wiersze macierzy normowane do sumy 1 (biel bez zmian)."""
+    m = CFG["cmix"]
+    if not any(m[o][i] for o in range(3) for i in range(3) if o != i):
+        return list(v)
+    out = []
+    for o in range(3):
+        s = sum(m[o][i] for i in range(3) if i != o)
+        out.append(min(max(max(0.0, 1.0 - s) * v[o] + sum(m[o][i] * v[i] for i in range(3) if i != o), 0.0), 255.0))
+    return out
 
 
 def lut_interp(c, mean):
@@ -90,14 +110,14 @@ def model(field, crop, mix, as_float=False, dim=None):
                 xa = min(xb, clx(cx1 - off - d + 1))
                 inner = (cx1 - cw // 2 + 1, xa - 1, ya, yb)
             cells = [field[y][x] for y in range(ya, yb + 1) for x in range(xa, xb + 1)]
-            f = [lut_interp(c, sum(p[c] for p in cells) / len(cells)) for c in range(3)]
+            f = cmix([lut_interp(c, sum(p[c] for p in cells) / len(cells)) for c in range(3)])
             ia, ib, ja, jb = inner
             deep = (ib - ia + 1) if side != "G" else (jb - ja + 1)
             sat = lambda v: [min(max(sum(v) / 3.0 + (t - sum(v) / 3.0) * CFG["sat"], 0.0), 255.0) for t in v]
             f = sat(f)
             if (mix > 0 or dim > 0) and deep >= MIN_CELLS:   # doswietlenie / przygaszanie: po nasyceniu krawedzi i srodka
                 ic = [field[y][x] for y in range(ja, jb + 1) for x in range(ia, ib + 1)]
-                m = sat([sum(round(lutf(c, p[c])) for p in ic) / len(ic) for c in range(3)])
+                m = sat(cmix([sum(round(lutf(c, p[c])) for p in ic) / len(ic) for c in range(3)]))
                 vm, ve = max(m), max(f)
                 lift = mix * (vm - KNEE) - ve
                 if lift > 0:
